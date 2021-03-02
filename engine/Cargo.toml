@@ -8,5 +8,6 @@ edition = "2018"
 anyhow = "1.0.38"
 argh = "0.1.4"
 comrak = { version = "0.9.1", default-features = false }
+serde = { version = "1.0.123", features = ["derive"] }
 thiserror = "1.0.24"
 url = "2.2.1"
