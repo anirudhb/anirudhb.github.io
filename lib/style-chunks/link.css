@@ -1,0 +1,9 @@
+a,
+a:visited {
+  color: lightskyblue;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}

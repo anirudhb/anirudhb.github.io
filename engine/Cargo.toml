@@ -1,0 +1,11 @@
+[package]
+name = "engine"
+version = "0.1.0"
+authors = ["anirudhb <anirudhb@users.noreply.github.com>"]
+edition = "2018"
+
+[dependencies]
+anyhow = "1.0.38"
+clap = "3.0.0-beta.2"
+comrak = "0.9.1"
+url = "2.2.1"
