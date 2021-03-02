@@ -5,8 +5,6 @@ Keep watching this page for updates :eyes:
 
 ![Here's a puppy!](https://cloud-f2pye8tve-hack-club-bot.vercel.app/0image.png)
 
-![Here's a bigger puppy!](https://cloud-4rf1phetv-hack-club-bot.vercel.app/0bill-stephan-9lkqymzflre-unsplash.jpg)
-
 [Click me for more puppies!](https://www.google.com/search?q=puppy&tbm=isch)
 
 [Go to my blog!](hyperref:blog)
