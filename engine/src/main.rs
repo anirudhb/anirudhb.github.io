@@ -5,23 +5,21 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use clap::Clap;
+use argh::FromArgs;
 use comrak::{
     nodes::{AstNode, NodeValue},
     Arena, ComrakOptions,
 };
 use url::Url;
 
-#[derive(Clap)]
-#[clap(
-    version = "0.1",
-    author = "Anirudh Balaji <anirudhb@users.noreply.github.com>"
-)]
+#[derive(FromArgs)]
+/// A simple site generator :)
 struct Args {
-    input_filename: PathBuf,
-    #[clap(short, long)]
-    /// Forces rebuild
+    #[argh(switch)]
+    /// forces rebuild
     force: bool,
+    #[argh(positional)]
+    input_filename: PathBuf,
 }
 
 fn walk<'a>(node: &'a AstNode<'a>, f: &mut impl FnMut(&'a AstNode<'a>)) {
@@ -32,7 +30,7 @@ fn walk<'a>(node: &'a AstNode<'a>, f: &mut impl FnMut(&'a AstNode<'a>)) {
 }
 
 fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
+    let args = argh::from_env::<Args>();
     println!("Input filename: {}", args.input_filename.to_string_lossy());
     render(
         &args.input_filename,
