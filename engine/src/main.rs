@@ -35,16 +35,20 @@ fn main() -> anyhow::Result<()> {
     );
     engine::render(
         // cows are fun
-        cfg.inputs.index,
+        &cfg.inputs.index,
         &cfg.roots.source,
         &cfg.roots.output,
+        &cfg.lib.prelude_location,
+        &cfg.lib.styles.chunks_root,
         "",
         args.force,
     )?;
     engine::render(
-        cfg.inputs.keep,
+        &cfg.inputs.keep,
         &cfg.roots.source,
         &cfg.roots.output,
+        &cfg.lib.prelude_location,
+        &cfg.lib.styles.chunks_root,
         "",
         args.force,
     )?;

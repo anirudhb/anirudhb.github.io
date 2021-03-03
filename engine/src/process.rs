@@ -22,24 +22,23 @@ fn walk<'a>(node: &'a AstNode<'a>, f: &mut impl FnMut(&'a AstNode<'a>)) {
     }
 }
 
-pub fn render<P1: AsRef<Path>, P2: AsRef<Path>, P3: AsRef<Path>, S: AsRef<str>>(
-    filename: P1,
-    base_dir: P2,
-    out_dir: P3,
-    base: S,
+pub fn render(
+    filename: &Path,
+    base_dir: &Path,
+    out_dir: &Path,
+    prelude_html: &Path,
+    style_chunks_root: &Path,
+    base: &str,
     force: bool,
 ) -> anyhow::Result<()> {
-    if !filename.as_ref().exists() {
-        println!(
-            "nonexistent: {}, nothing to do",
-            filename.as_ref().to_string_lossy()
-        );
+    if !filename.exists() {
+        println!("nonexistent: {}, nothing to do", filename.to_string_lossy());
         return Ok(());
     }
 
     // create out dir if doesn't exist
-    if !out_dir.as_ref().exists() {
-        std::fs::create_dir_all(out_dir.as_ref())?;
+    if !out_dir.exists() {
+        std::fs::create_dir_all(out_dir)?;
     }
     // // canonicalize paths
     // let (filename, base_dir, out_dir) = (
@@ -48,12 +47,13 @@ pub fn render<P1: AsRef<Path>, P2: AsRef<Path>, P3: AsRef<Path>, S: AsRef<str>>(
     //     out_dir.as_ref().canonicalize()?,
     // );
     // as-ref paths
-    let (filename, base_dir, out_dir) = (filename.as_ref(), base_dir.as_ref(), out_dir.as_ref());
+    // let (filename, base_dir, out_dir) = (filename.as_ref(), base_dir.as_ref(), out_dir.as_ref());
 
+    // NOTE: can't canonicalize here since the output path may not exist
     let out_path = out_dir
         .join(filename.strip_prefix(&base_dir)?)
         .with_extension("html");
-    println!("out: {}", out_path.to_string_lossy());
+    println!("out: {}", out_path.to_str().unwrap_or("unknown"));
 
     let buf = {
         let mut s = String::new();
@@ -110,7 +110,7 @@ pub fn render<P1: AsRef<Path>, P2: AsRef<Path>, P3: AsRef<Path>, S: AsRef<str>>(
                                 fname_for_url.with_extension("html").to_str().unwrap(),
                             );
                             if !stack.contains(&fname) {
-                                println!("walk: {}", fname.to_string_lossy());
+                                println!("walk: {}", fname.to_str().unwrap_or("unknown"));
                                 stack.push(fname);
                             }
                             link.url = new_location.into_bytes();
@@ -143,11 +143,7 @@ pub fn render<P1: AsRef<Path>, P2: AsRef<Path>, P3: AsRef<Path>, S: AsRef<str>>(
         let mut new_styles = Vec::new();
         for sname in styles.into_iter() {
             let mut s = String::new();
-            let path = format!(
-                "{}/../lib/style-chunks/{}.css",
-                env!("CARGO_MANIFEST_DIR"),
-                sname
-            );
+            let path = style_chunks_root.join(sname).with_extension("css");
             // skip missing files
             if let Ok(path) = AsRef::<Path>::as_ref(&path).canonicalize() {
                 let mut f = File::open(&path)?;
@@ -158,12 +154,8 @@ pub fn render<P1: AsRef<Path>, P2: AsRef<Path>, P3: AsRef<Path>, S: AsRef<str>>(
         Ok::<_, std::io::Error>(new_styles)
     }?;
     let html = {
-        let path =
-            AsRef::<Path>::as_ref(concat!(env!("CARGO_MANIFEST_DIR"), "/../lib/prelude.html"))
-                .canonicalize()
-                .expect("Failed to canonicalize static path!");
-        println!("path = {}", path.to_str().unwrap_or("unknown"));
-        let mut f = File::open(path)?;
+        println!("path = {}", prelude_html.to_str().unwrap_or("unknown"));
+        let mut f = File::open(prelude_html)?;
         let mut s = String::new();
         f.read_to_string(&mut s)?;
         Ok::<_, std::io::Error>(s)
@@ -204,8 +196,16 @@ pub fn render<P1: AsRef<Path>, P2: AsRef<Path>, P3: AsRef<Path>, S: AsRef<str>>(
     // write stack
     for fname in stack {
         let base_add = fname.strip_prefix(&base_dir).unwrap();
-        let new_base = format!("{}/{}", base.as_ref(), base_add.to_str().unwrap());
-        render(fname, &base_dir, &out_dir, new_base, force)?;
+        let new_base = format!("{}/{}", base, base_add.to_str().unwrap());
+        render(
+            &fname,
+            base_dir,
+            out_dir,
+            prelude_html,
+            style_chunks_root,
+            &new_base,
+            force,
+        )?;
     }
 
     Ok(())
