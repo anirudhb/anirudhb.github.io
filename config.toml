@@ -1,0 +1,6 @@
+# Config for engine
+[roots]
+source = "src"
+lib = "lib"
+assets = "assets"
+output = "out"

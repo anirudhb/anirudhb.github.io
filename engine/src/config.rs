@@ -1,62 +1,194 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
+
+trait PathHelper {
+    /// Attempts to canonicalize the path, otherwise
+    /// returns it as is.
+    fn maybe_canonicalize(&self) -> PathBuf;
+    /// Attempts to join the given path with self,
+    /// unless self is an absolute path.
+    fn maybe_suffix(&self, p: &Path) -> PathBuf;
+}
+
+impl PathHelper for Path {
+    fn maybe_canonicalize(&self) -> PathBuf {
+        self.canonicalize().unwrap_or_else(|_| self.to_path_buf())
+    }
+    fn maybe_suffix(&self, p: &Path) -> PathBuf {
+        if self.is_absolute() {
+            self.to_path_buf()
+        } else {
+            p.join(self)
+        }
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Config {
     // Basic roots
-    roots: RootsConfig,
-
+    pub roots: RootsConfig,
     // Basic inputs
-    inputs: InputsConfig,
-
+    pub inputs: Option<InputsConfig>,
     // Lib config
-    lib: LibConfig,
+    pub lib: Option<LibConfig>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct ResolvedConfig {
+    // Basic roots
+    pub roots: ResolvedRootsConfig,
+    // Basic inputs
+    pub inputs: ResolvedInputsConfig,
+    // Lib config
+    pub lib: ResolvedLibConfig,
+}
+
+impl Config {
+    pub fn resolve(self, config_folder: &Path) -> ResolvedConfig {
+        let roots = self.roots.resolve(config_folder);
+        let inputs = self
+            .inputs
+            .unwrap_or_default()
+            .resolve(&roots.source, config_folder);
+        let lib = self
+            .lib
+            .unwrap_or_default()
+            .resolve(&roots.lib, config_folder);
+        ResolvedConfig { roots, inputs, lib }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct RootsConfig {
     /// Source root
-    source: String,
+    pub source: PathBuf,
     /// Lib root
-    lib: String,
+    pub lib: PathBuf,
     /// Assets root
-    assets: String,
+    pub assets: PathBuf,
+    /// Output root
+    pub output: PathBuf,
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct ResolvedRootsConfig {
+    /// Source root
+    pub source: PathBuf,
+    /// Lib root
+    pub lib: PathBuf,
+    /// Assets root
+    pub assets: PathBuf,
+    /// Output root
+    pub output: PathBuf,
+}
+
+impl RootsConfig {
+    pub fn resolve(self, config_location: &Path) -> ResolvedRootsConfig {
+        ResolvedRootsConfig {
+            source: self
+                .source
+                .maybe_suffix(config_location)
+                .maybe_canonicalize(),
+            lib: self.lib.maybe_suffix(config_location).maybe_canonicalize(),
+            assets: self
+                .assets
+                .maybe_suffix(config_location)
+                .maybe_canonicalize(),
+            output: self
+                .output
+                .maybe_suffix(config_location)
+                .maybe_canonicalize(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub struct InputsConfig {
     /// Index page
     ///
     /// If none, defaults to the index.md file in the source root
-    index: Option<String>,
+    pub index: Option<PathBuf>,
     /// Root _keep file
     ///
     /// If none, defaults to the _keep file in the source root
-    keep: Option<String>,
+    pub keep: Option<PathBuf>,
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct ResolvedInputsConfig {
+    /// Index page
+    pub index: PathBuf,
+    /// Root _keep file
+    pub keep: PathBuf,
+}
+
+impl InputsConfig {
+    pub fn resolve(self, source_root: &Path, config_folder: &Path) -> ResolvedInputsConfig {
+        ResolvedInputsConfig {
+            index: self
+                .index
+                .map(|x| x.maybe_suffix(config_folder))
+                .unwrap_or_else(|| source_root.join("index.md"))
+                .maybe_canonicalize(),
+            keep: self
+                .keep
+                .map(|x| x.maybe_suffix(config_folder))
+                .unwrap_or_else(|| source_root.join("_keep.md"))
+                .maybe_canonicalize(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub struct LibConfig {
     /// Prelude location
     ///
     /// If none, defaults to the prelude.html file in the lib root
-    prelude_location: Option<String>,
+    pub prelude_location: Option<PathBuf>,
     // Style config
-    styles: StylesConfig,
+    pub styles: StylesConfig,
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct ResolvedLibConfig {
+    /// Prelude location
+    pub prelude_location: PathBuf,
+    // Style config
+    pub styles: ResolvedStylesConfig,
+}
+
+impl LibConfig {
+    pub fn resolve(self, lib_root: &Path, config_folder: &Path) -> ResolvedLibConfig {
+        ResolvedLibConfig {
+            prelude_location: self
+                .prelude_location
+                .map(|x| x.maybe_suffix(config_folder))
+                .unwrap_or_else(|| lib_root.join("prelude.html"))
+                .maybe_canonicalize(),
+            styles: self.styles.resolve(lib_root, config_folder),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub struct StylesConfig {
     /// Style chunks root
     ///
     /// If none, defaults to the style-chunks folder in the lib root
-    chunks_root: Option<String>,
+    pub chunks_root: Option<PathBuf>,
     /// CSS filenames
     ///
     /// Some defaults:
@@ -66,5 +198,31 @@ pub struct StylesConfig {
     ///
     /// Note that nonexistent files are ignored and relative paths are resolved
     /// relative to the style chunks root
-    css: HashMap<String, String>,
+    pub css: HashMap<String, PathBuf>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct ResolvedStylesConfig {
+    /// Style chunks root
+    pub chunks_root: PathBuf,
+    /// CSS filenames
+    pub css: HashMap<String, PathBuf>,
+}
+
+impl StylesConfig {
+    pub fn resolve(self, lib_root: &Path, config_folder: &Path) -> ResolvedStylesConfig {
+        ResolvedStylesConfig {
+            chunks_root: self
+                .chunks_root
+                .map(|x| x.maybe_suffix(config_folder))
+                .unwrap_or_else(|| lib_root.join("style-chunks"))
+                .maybe_canonicalize(),
+            css: self
+                .css
+                .into_iter()
+                .map(|(k, v)| (k, v.maybe_suffix(config_folder).maybe_canonicalize()))
+                .collect(),
+        }
+    }
 }
