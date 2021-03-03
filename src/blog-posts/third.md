@@ -1,3 +1,3 @@
 # yay!!
 
-new file uwuu
+new file funny

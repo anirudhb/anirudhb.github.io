@@ -9,16 +9,97 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use comrak::{
-    nodes::{AstNode, NodeValue},
-    Arena, ComrakOptions,
-};
+use pulldown_cmark::{html, Event, LinkType, Parser, Tag};
 use url::Url;
 
-fn walk<'a>(node: &'a AstNode<'a>, f: &mut impl FnMut(&'a AstNode<'a>)) {
-    f(node);
-    for c in node.children() {
-        walk(c, f);
+struct RenderAdapter<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> {
+    styles: &'a mut HashSet<&'c str>,
+    render_stack: &'a mut Vec<PathBuf>,
+    base_dir: &'a Path,
+    out_dir: &'a Path,
+    filename: &'a Path,
+    iter: I,
+}
+
+impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'a, 'b, 'c, I> {
+    type Item = Event<'b>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let item = self.iter.next()?;
+        Some(match item {
+            Event::Start(tag) => match tag {
+                i @ Tag::Image(..) => {
+                    self.styles.insert("image");
+                    Event::Start(i)
+                }
+                p @ Tag::Paragraph => {
+                    self.styles.insert("paragraph");
+                    Event::Start(p)
+                }
+                Tag::Link(ty, url, title) => {
+                    self.styles.insert("link");
+                    match ty {
+                        LinkType::Inline => {
+                            if let Ok(parsed) = Url::parse(&url) {
+                                // check if scheme is hyperref, if so add to stack and rewrite url
+                                if parsed.scheme() == "hyperref" {
+                                    let parsed_path: &Path = parsed.path().as_ref();
+                                    let fname: PathBuf = if parsed_path.is_absolute() {
+                                        self.out_dir.join(parsed_path.strip_prefix("/").unwrap())
+                                    } else {
+                                        self.filename
+                                            .parent()
+                                            .unwrap_or("/".as_ref())
+                                            .join(parsed.path())
+                                    }
+                                    .with_extension("md");
+                                    #[cfg(target_os = "windows")]
+                                    // replace with backslashes so that \\?\ isn't broken
+                                    let fname: PathBuf =
+                                        fname.to_str().unwrap().replace("/", "\\").into();
+                                    if let Ok(fname) = fname.canonicalize() {
+                                        let fname_for_url =
+                                            fname.strip_prefix(&self.base_dir).unwrap();
+                                        #[cfg(target_os = "windows")]
+                                    // windows is dumb again
+                                    let fname_for_url: PathBuf =
+                                        fname_for_url.to_str().unwrap().replace("\\", "/").into();
+                                        // figure out new location
+                                        let new_location = format!(
+                                            "/{}",
+                                            fname_for_url.with_extension("html").to_str().unwrap(),
+                                        );
+                                        if !self.render_stack.contains(&fname) {
+                                            println!(
+                                                "walk: {}",
+                                                fname.to_str().unwrap_or("unknown")
+                                            );
+                                            self.render_stack.push(fname);
+                                        }
+                                        Event::Start(Tag::Link(ty, new_location.into(), title))
+                                        // link.url = new_location.into_bytes();
+                                    } else {
+                                        println!("Couldn't resolve hyperref: {}", url);
+                                        Event::Start(Tag::Link(ty, url, title))
+                                    }
+                                } else {
+                                    Event::Start(Tag::Link(ty, url, title))
+                                }
+                            } else {
+                                Event::Start(Tag::Link(ty, url, title))
+                            }
+                        }
+                        _ => Event::Start(Tag::Link(ty, url, title)),
+                    }
+                }
+                t => Event::Start(t),
+            },
+            Event::Text(s) => {
+                let new_text = s.replace(":eyes:", "👀");
+                Event::Text(new_text.into())
+            }
+            ev => ev,
+        })
     }
 }
 
@@ -32,7 +113,10 @@ pub fn render(
     force: bool,
 ) -> anyhow::Result<()> {
     if !filename.exists() {
-        println!("nonexistent: {}, nothing to do", filename.to_string_lossy());
+        println!(
+            "nonexistent: {}, nothing to do",
+            filename.to_str().unwrap_or("unknown")
+        );
         return Ok(());
     }
 
@@ -62,9 +146,6 @@ pub fn render(
         Ok::<_, std::io::Error>(s)
     }?;
 
-    let arena = Arena::new();
-    let root = comrak::parse_document(&arena, &buf, &ComrakOptions::default());
-
     let mut styles = {
         let mut h = HashSet::new();
         h.insert("_global");
@@ -72,73 +153,22 @@ pub fn render(
     };
     let mut stack = Vec::new();
 
-    walk(root, &mut |node| {
-        match node.data.borrow_mut().value {
-            NodeValue::Image(..) => {
-                styles.insert("image");
-            }
-            NodeValue::Link(ref mut link) => {
-                styles.insert("link");
-                // check link
-                // okay since entire document is a String
-                let url_s = std::str::from_utf8(&link.url).unwrap();
-                if let Ok(parsed) = Url::parse(url_s) {
-                    // check if scheme is hyperref, if so add to stack and rewrite url
-                    if parsed.scheme() == "hyperref" {
-                        let parsed_path: &Path = parsed.path().as_ref();
-                        let fname: PathBuf = if parsed_path.is_absolute() {
-                            out_dir.join(parsed_path.strip_prefix("/").unwrap())
-                        } else {
-                            filename
-                                .parent()
-                                .unwrap_or("/".as_ref())
-                                .join(parsed.path())
-                        }
-                        .with_extension("md");
-                        #[cfg(target_os = "windows")]
-                        // replace with backslashes so that \\?\ isn't broken
-                        let fname: PathBuf = fname.to_str().unwrap().replace("/", "\\").into();
-                        if let Ok(fname) = fname.canonicalize() {
-                            let fname_for_url = fname.strip_prefix(&base_dir).unwrap();
-                            #[cfg(target_os = "windows")]
-                            // windows is dumb again
-                            let fname_for_url: PathBuf =
-                                fname_for_url.to_str().unwrap().replace("\\", "/").into();
-                            // figure out new location
-                            let new_location = format!(
-                                "/{}",
-                                fname_for_url.with_extension("html").to_str().unwrap(),
-                            );
-                            if !stack.contains(&fname) {
-                                println!("walk: {}", fname.to_str().unwrap_or("unknown"));
-                                stack.push(fname);
-                            }
-                            link.url = new_location.into_bytes();
-                        } else {
-                            println!("Couldn't resolve hyperref: {}", url_s);
-                        }
-                    }
-                }
-            }
-            NodeValue::Paragraph => {
-                styles.insert("paragraph");
-            }
-            NodeValue::Text(ref mut text) => {
-                // okay since the entire document is a String
-                let s = std::str::from_utf8(&text).unwrap();
-                let new_text = s.replace(":eyes:", "👀");
-                *text = new_text.into_bytes();
-            }
-            _ => {}
-        };
-    });
-
     let html = {
-        let mut html = Vec::new();
-        comrak::format_html(root, &ComrakOptions::default(), &mut html)?;
-        let s = String::from_utf8(html)?;
-        Ok::<_, anyhow::Error>(s)
-    }?;
+        let parser = Parser::new(&buf);
+        let adapter = RenderAdapter {
+            base_dir,
+            filename,
+            out_dir,
+            render_stack: &mut stack,
+            styles: &mut styles,
+            iter: parser,
+        };
+
+        let mut s = String::new();
+        html::push_html(&mut s, adapter);
+        s
+    };
+
     let styles = {
         let mut new_styles = Vec::new();
         for sname in styles.into_iter() {
