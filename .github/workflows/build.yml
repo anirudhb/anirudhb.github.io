@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - name: Build site
-        run: cd engine && cargo run -- -f ../src/index.md
+        run: cd engine && cargo run ../config.toml
       - name: Deploy to gh pages
         uses: peaceiris/actions-gh-pages@v3
         with:
