@@ -172,13 +172,26 @@ pub fn render(
     let styles = {
         let mut new_styles = Vec::new();
         for sname in styles.into_iter() {
-            let mut s = String::new();
             let path = style_chunks_root.join(sname).with_extension("css");
             // skip missing files
             if let Ok(path) = AsRef::<Path>::as_ref(&path).canonicalize() {
-                let mut f = File::open(&path)?;
-                f.read_to_string(&mut s)?;
-                new_styles.push(s);
+                let css_out_path = out_dir.join("css").join(sname).with_extension("css");
+                if let Some(p) = css_out_path.parent() {
+                    std::fs::create_dir_all(p)?;
+                }
+                std::fs::copy(&path, &css_out_path)?;
+                new_styles.push(format!(
+                    r#"
+<link rel="preload" href="/{0}" as="style" />
+<link rel="stylesheet" type="text/css" href="/{0}" />
+"#,
+                    css_out_path
+                        .strip_prefix(out_dir)
+                        .unwrap_or(&css_out_path)
+                        .to_str()
+                        .unwrap_or("unknown")
+                        .replace("\\", "/")
+                ));
             }
         }
         Ok::<_, std::io::Error>(new_styles)
@@ -190,10 +203,7 @@ pub fn render(
         f.read_to_string(&mut s)?;
         Ok::<_, std::io::Error>(s)
     }?
-    .replace(
-        "@@@SLOT_STYLES@@@",
-        &format!("<style>\n{}\n</style>", styles.join("\n")),
-    )
+    .replace("@@@SLOT_STYLES@@@", &format!("\n{}\n", styles.join("\n")))
     .replace("@@@SLOT_CONTENT@@@", &html);
 
     // write only if file doesn't exist
