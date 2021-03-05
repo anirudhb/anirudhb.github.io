@@ -2,7 +2,7 @@ use std::{fs::File, io::Read};
 
 use anyhow::Context;
 use argh::FromArgs;
-use engine::Config;
+use engine::{Config, Processor};
 
 #[derive(FromArgs)]
 /// A simple site generator :)
@@ -33,25 +33,8 @@ fn main() -> anyhow::Result<()> {
             .parent()
             .context("Parent folder of config file")?,
     );
-    engine::render(
-        // cows are fun
-        &cfg.inputs.index,
-        &cfg.roots.source,
-        &cfg.roots.output,
-        &cfg.lib.prelude_location,
-        &cfg.lib.styles.chunks_root,
-        "",
-        args.force,
-    )?;
-    engine::render(
-        &cfg.inputs.keep,
-        &cfg.roots.source,
-        &cfg.roots.output,
-        &cfg.lib.prelude_location,
-        &cfg.lib.styles.chunks_root,
-        "",
-        args.force,
-    )?;
+    let processor = Processor::new(cfg);
+    processor.render_toplevel(args.force)?;
 
     Ok(())
 }
