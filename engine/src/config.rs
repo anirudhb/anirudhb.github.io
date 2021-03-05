@@ -5,27 +5,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-trait PathHelper {
-    /// Attempts to canonicalize the path, otherwise
-    /// returns it as is.
-    fn maybe_canonicalize(&self) -> PathBuf;
-    /// Attempts to join the given path with self,
-    /// unless self is an absolute path.
-    fn maybe_suffix(&self, p: &Path) -> PathBuf;
-}
-
-impl PathHelper for Path {
-    fn maybe_canonicalize(&self) -> PathBuf {
-        self.canonicalize().unwrap_or_else(|_| self.to_path_buf())
-    }
-    fn maybe_suffix(&self, p: &Path) -> PathBuf {
-        if self.is_absolute() {
-            self.to_path_buf()
-        } else {
-            p.join(self)
-        }
-    }
-}
+use crate::util::PathHelper;
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
