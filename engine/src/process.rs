@@ -203,7 +203,25 @@ impl Processor {
                     if let Some(p) = css_out_path.parent() {
                         std::fs::create_dir_all(p)?;
                     }
-                    std::fs::copy(&path, &css_out_path)?;
+                    // Minify style first
+                    let minified_css = {
+                        let mut s = String::new();
+                        let mut f = File::open(&path)?;
+                        f.read_to_string(&mut s)?;
+                        let minified = html_minifier::css::minify(&s)
+                            .map_err(|_| anyhow::anyhow!("minify failed"))?;
+                        println!(
+                            "Minified {} bytes -> {} bytes ({:.3}%)",
+                            s.len(),
+                            minified.len(),
+                            (((minified.len() as f64) - (s.len() as f64)) / s.len() as f64) * 100.
+                        );
+                        Ok::<_, anyhow::Error>(minified)
+                    }?;
+                    {
+                        let mut f = File::create(&css_out_path)?;
+                        f.write_all(minified_css.as_bytes())?;
+                    }
                     new_styles.push(format!(
                         r#"
     <link rel="preload" href="/{0}" as="style" />
@@ -230,6 +248,16 @@ impl Processor {
         .replace("@@@SLOT_STYLES@@@", &format!("\n{}\n", styles.join("\n")))
         .replace("@@@SLOT_CONTENT@@@", &html);
 
+        // Minify HTML
+        let minified = html_minifier::minify(&html)?;
+
+        println!(
+            "Minified {} bytes -> {} bytes ({:.3}%)",
+            html.len(),
+            minified.len(),
+            (((minified.len() as f64) - (html.len() as f64)) / html.len() as f64) * 100.
+        );
+
         // write only if file doesn't exist
         let needs_update = if let (Ok(out_metadata), Ok(in_metadata)) =
             (out_path.metadata(), filename.metadata())
@@ -252,7 +280,7 @@ impl Processor {
                 println!("special: _keep, no output");
             } else {
                 let mut f = File::create(&out_path)?;
-                f.write_all(html.as_bytes())?;
+                f.write_all(minified.as_bytes())?;
                 // println!("{}", html);
                 println!("new: {}", out_path.to_str().unwrap_or("unknown"));
             }
