@@ -12,6 +12,8 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - uses: Swatinem/rust-cache@v1
+        with:
+          working-directory: engine
       - name: Build site
         run: cd engine && cargo run ../config.toml
       - name: Deploy to gh pages
