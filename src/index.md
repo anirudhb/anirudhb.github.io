@@ -1,7 +1,7 @@
 # Anirudh :))
 
 This is the v2 version of my site which I'm building as we speak!
-Keep watching this page for updates :eyes:
+Keep watching this page for updates 👀
 
 Here's a little bit more content!
 

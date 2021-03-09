@@ -96,10 +96,6 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
                 }
                 t => Event::Start(t),
             },
-            Event::Text(s) => {
-                let new_text = s.replace(":eyes:", "👀");
-                Event::Text(new_text.into())
-            }
             ev => ev,
         })
     }
