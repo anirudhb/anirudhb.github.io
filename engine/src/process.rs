@@ -145,10 +145,8 @@ impl Processor {
     }
 
     pub fn render_toplevel(&mut self, force: bool) -> anyhow::Result<()> {
-        self.render_stack.extend(std::array::IntoIter::new([
-            RenderingInput::Index,
-            RenderingInput::Keep,
-        ]));
+        self.render_stack.push_front(RenderingInput::Index);
+        self.render_stack.push_front(RenderingInput::Keep);
         self.render_all(force)?;
         Ok(())
     }
