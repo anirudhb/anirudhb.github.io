@@ -15,11 +15,7 @@ use url::Url;
 use crate::config::ResolvedConfig;
 
 struct RenderAdapter<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> {
-    styles: &'a mut HashSet<&'c str>,
-    render_stack: &'a mut Vec<PathBuf>,
-    base_dir: &'a Path,
-    out_dir: &'a Path,
-    filename: &'a Path,
+    ctx: &'a mut ProcessorContext<'a, 'c>,
     iter: I,
 }
 
@@ -28,18 +24,23 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
 
     fn next(&mut self) -> Option<Self::Item> {
         let item = self.iter.next()?;
+        let styles = &mut self.ctx.styles;
+        let render_stack = &mut *self.ctx.render_stack;
+        let out_dir = &self.ctx.config.roots.output;
+        let base_dir = &self.ctx.config.roots.source;
+        let filename = self.ctx.filename;
         Some(match item {
             Event::Start(tag) => match tag {
                 i @ Tag::Image(..) => {
-                    self.styles.insert("image");
+                    styles.insert("image");
                     Event::Start(i)
                 }
                 p @ Tag::Paragraph => {
-                    self.styles.insert("paragraph");
+                    styles.insert("paragraph");
                     Event::Start(p)
                 }
                 Tag::Link(ty, url, title) => {
-                    self.styles.insert("link");
+                    styles.insert("link");
                     match ty {
                         LinkType::Inline => {
                             if let Ok(parsed) = Url::parse(&url) {
@@ -47,9 +48,9 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
                                 if parsed.scheme() == "hyperref" {
                                     let parsed_path: &Path = parsed.path().as_ref();
                                     let fname: PathBuf = if parsed_path.is_absolute() {
-                                        self.out_dir.join(parsed_path.strip_prefix("/").unwrap())
+                                        out_dir.join(parsed_path.strip_prefix("/").unwrap())
                                     } else {
-                                        self.filename
+                                        filename
                                             .parent()
                                             .unwrap_or("/".as_ref())
                                             .join(parsed.path())
@@ -60,8 +61,7 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
                                     let fname: PathBuf =
                                         fname.to_str().unwrap().replace("/", "\\").into();
                                     if let Ok(fname) = fname.canonicalize() {
-                                        let fname_for_url =
-                                            fname.strip_prefix(&self.base_dir).unwrap();
+                                        let fname_for_url = fname.strip_prefix(&base_dir).unwrap();
                                         #[cfg(target_os = "windows")]
                                     // windows is dumb again
                                     let fname_for_url: PathBuf =
@@ -71,12 +71,12 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
                                             "/{}",
                                             fname_for_url.with_extension("html").to_str().unwrap(),
                                         );
-                                        if !self.render_stack.contains(&fname) {
+                                        if !render_stack.contains(&fname) {
                                             println!(
                                                 "walk: {}",
                                                 fname.to_str().unwrap_or("unknown")
                                             );
-                                            self.render_stack.push(fname);
+                                            render_stack.push(fname);
                                         }
                                         Event::Start(Tag::Link(ty, new_location.into(), title))
                                         // link.url = new_location.into_bytes();
@@ -99,6 +99,14 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
             ev => ev,
         })
     }
+}
+
+/// Processing context for a single file
+pub struct ProcessorContext<'a, 'b: 'a> {
+    styles: &'a mut HashSet<&'b str>,
+    filename: &'a Path,
+    render_stack: &'a mut Vec<PathBuf>,
+    config: &'a ResolvedConfig,
 }
 
 /// Processes files
@@ -175,12 +183,14 @@ impl Processor {
 
         let html = {
             let parser = Parser::new(&buf);
-            let adapter = RenderAdapter {
-                base_dir,
+            let mut ctx = ProcessorContext {
                 filename,
-                out_dir,
-                render_stack: &mut stack,
                 styles: &mut styles,
+                config: &self.config,
+                render_stack: &mut stack,
+            };
+            let adapter = RenderAdapter {
+                ctx: &mut ctx,
                 iter: parser,
             };
 
