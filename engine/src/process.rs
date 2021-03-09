@@ -5,11 +5,14 @@
 use std::{
     collections::{HashSet, VecDeque},
     fs::File,
-    io::{Read, Write},
+    io::{Cursor, Read, Write},
     path::{Path, PathBuf},
 };
 
+use anyhow::Context;
+use image::ImageFormat;
 use pulldown_cmark::{html, Event, LinkType, Parser, Tag};
+use reqwest::blocking::Client;
 use url::Url;
 
 use crate::config::ResolvedConfig;
@@ -32,9 +35,31 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
         let filename = self.ctx.filename;
         Some(match item {
             Event::Start(tag) => match tag {
-                i @ Tag::Image(..) => {
+                Tag::Image(ty, url, title) => {
                     styles.insert("image");
-                    Event::Start(i)
+                    match ty {
+                        LinkType::Inline => {
+                            if let Ok(parsed) = Url::parse(&url) {
+                                use sha2::Digest;
+                                let hashname = format!(
+                                    "{:x}",
+                                    sha2::Sha256::digest(parsed.as_str().as_bytes())
+                                );
+                                let new_url = format!("/images/{}.webp", hashname);
+                                let input = RenderingInput::Image {
+                                    input: parsed,
+                                    output: hashname,
+                                };
+                                if !render_stack.contains(&input) && !finished.contains(&input) {
+                                    render_stack.push_front(input);
+                                }
+                                Event::Start(Tag::Image(ty, new_url.into(), title))
+                            } else {
+                                Event::Start(Tag::Image(ty, url, title))
+                            }
+                        }
+                        _ => Event::Start(Tag::Image(ty, url, title)),
+                    }
                 }
                 p @ Tag::Paragraph => {
                     styles.insert("paragraph");
@@ -81,12 +106,12 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
                                             "/{}",
                                             fname_for_url.with_extension("html").to_str().unwrap(),
                                         );
-                                        let input = RenderingInput::Other(fname);
+                                        let input = RenderingInput::Page(fname);
                                         if !render_stack.contains(&input)
                                             && !finished.contains(&input)
                                         {
                                             match input {
-                                                RenderingInput::Other(ref fname) => println!(
+                                                RenderingInput::Page(ref fname) => println!(
                                                     "walk: {}",
                                                     fname.to_str().unwrap_or("unknown")
                                                 ),
@@ -131,7 +156,12 @@ pub struct ProcessorContext<'a, 'b: 'a> {
 pub enum RenderingInput {
     Index,
     Keep,
-    Other(PathBuf),
+    Image {
+        input: Url,
+        // Will be output to /images/{output}.webp
+        output: String,
+    },
+    Page(PathBuf),
 }
 
 /// Processes files
@@ -142,6 +172,8 @@ pub struct Processor {
     render_stack: VecDeque<RenderingInput>,
     // items that have already been rendered
     finished: HashSet<RenderingInput>,
+    // request client
+    client: Client,
 }
 
 impl Processor {
@@ -150,6 +182,7 @@ impl Processor {
             config,
             render_stack: Default::default(),
             finished: Default::default(),
+            client: Client::new(),
         }
     }
 
@@ -168,7 +201,95 @@ impl Processor {
         Ok(())
     }
 
-    pub fn render(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
+    fn render_image(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
+        let (inp, out) = match input {
+            RenderingInput::Image {
+                ref input,
+                ref output,
+            } => (input, output),
+            _ => panic!("expected image enum"),
+        };
+        let out = PathBuf::from(out).with_extension("webp");
+        let out_path = self.config.roots.output.join("images").join(out);
+
+        if out_path.exists() && !force {
+            println!("fresh: {}", out_path.to_str().unwrap_or("unknown"));
+            self.finished.insert(input);
+            return Ok(());
+        }
+
+        let (mut reader, img_type): (Box<dyn Read>, ImageFormat) = if inp.scheme() == "file" {
+            let path = inp.to_file_path().ok().context("URL to file path")?;
+            let f = File::open(&path)?;
+            (Box::new(f), ImageFormat::from_path(&path)?)
+        } else {
+            // fetch the url
+            let r = self.client.get(inp.as_str()).send()?;
+            let content_type = r
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .context("Get image content type")?
+                .to_str()?;
+            let img_type = match content_type {
+                "image/webp" => ImageFormat::WebP,
+                "image/png" => ImageFormat::Png,
+                "image/jpeg" => ImageFormat::Jpeg,
+                "image/gif" => ImageFormat::Gif,
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "Unknown content type for image: {}",
+                        content_type
+                    ))
+                }
+            };
+            (Box::new(r), img_type)
+        };
+
+        use std::time::Instant;
+        let start_time = Instant::now();
+
+        match img_type {
+            ImageFormat::WebP => {
+                // Directly copy to the file.
+                let mut f = File::create(&out_path)?;
+                std::io::copy(&mut reader, &mut f)?;
+            }
+            img_type => {
+                // Convert to WebP, then write to file.
+                let mut v = Vec::new();
+                reader.read_to_end(&mut v)?;
+                println!("img size = {} bytes", v.len());
+                let cursor = Cursor::new(&v);
+                let mut img_in = image::io::Reader::new(cursor);
+                img_in.set_format(img_type);
+                if let Some(parent) = out_path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                let mut f = File::create(&out_path)?;
+                let decoded = img_in.decode()?;
+                let encoder = webp::Encoder::from_image(&decoded);
+                let mem = encoder.encode(75.);
+                f.write_all(&mem)?;
+                println!(
+                    "Processed to WebP: {} bytes -> {} bytes ({:.3}%)",
+                    v.len(),
+                    mem.len(),
+                    ((mem.len() as f64) - (v.len() as f64)) / (v.len() as f64) * 100.
+                );
+            }
+        }
+
+        let end_time = Instant::now();
+        println!(
+            "Image processed in {:.2} seconds!",
+            (end_time - start_time).as_secs_f64()
+        );
+
+        self.finished.insert(input);
+        Ok(())
+    }
+
+    fn render(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
         let out_dir = &self.config.roots.output;
         let base_dir = &self.config.roots.source;
         let style_chunks_root = &self.config.lib.styles.chunks_root;
@@ -176,7 +297,8 @@ impl Processor {
         let filename = match input {
             RenderingInput::Index => &self.config.inputs.index,
             RenderingInput::Keep => &self.config.inputs.keep,
-            RenderingInput::Other(ref o) => o,
+            RenderingInput::Image { .. } => return self.render_image(input, force),
+            RenderingInput::Page(ref o) => o,
         };
 
         if !filename.exists() {

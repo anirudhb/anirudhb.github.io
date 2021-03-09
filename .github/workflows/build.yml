@@ -15,7 +15,7 @@ jobs:
         with:
           working-directory: engine
       - name: Build site
-        run: cd engine && cargo run ../config.toml
+        run: cd engine && cargo run --release -- ../config.toml
       - name: Deploy to gh pages
         uses: peaceiris/actions-gh-pages@v3
         with:
