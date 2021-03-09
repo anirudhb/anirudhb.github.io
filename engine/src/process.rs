@@ -3,7 +3,7 @@
  */
 
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     fs::File,
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -83,7 +83,7 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
                                                 ),
                                                 _ => {}
                                             }
-                                            render_stack.push(input);
+                                            render_stack.push_back(input);
                                         }
                                         Event::Start(Tag::Link(ty, new_location.into(), title))
                                         // link.url = new_location.into_bytes();
@@ -114,7 +114,7 @@ pub struct ProcessorContext<'a, 'b: 'a> {
     filename: &'a Path,
     config: &'a ResolvedConfig,
     finished: &'a HashSet<RenderingInput>,
-    render_stack: &'a mut Vec<RenderingInput>,
+    render_stack: &'a mut VecDeque<RenderingInput>,
 }
 
 /// Rendering input
@@ -130,7 +130,7 @@ pub struct Processor {
     /// Stuff is derived from this
     config: ResolvedConfig,
     // next items to render
-    render_stack: Vec<RenderingInput>,
+    render_stack: VecDeque<RenderingInput>,
     // items that have already been rendered
     finished: HashSet<RenderingInput>,
 }
@@ -154,12 +154,9 @@ impl Processor {
     }
 
     fn render_all(&mut self, force: bool) -> anyhow::Result<()> {
-        while !self.render_stack.is_empty() {
-            let stack = std::mem::take(&mut self.render_stack);
-            for input in stack {
-                println!("RENDER: {:?}", input);
-                self.render(input, force)?;
-            }
+        while let Some(input) = self.render_stack.pop_front() {
+            println!("RENDER: {:?}", input);
+            self.render(input, force)?;
         }
         Ok(())
     }
