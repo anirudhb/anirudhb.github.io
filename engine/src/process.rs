@@ -40,6 +40,15 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
                     styles.insert("paragraph");
                     Event::Start(p)
                 }
+                Tag::Heading(level) => {
+                    match level {
+                        1 => {
+                            styles.insert("h1");
+                        }
+                        _ => {}
+                    }
+                    Event::Start(Tag::Heading(level))
+                }
                 Tag::Link(ty, url, title) => {
                     styles.insert("link");
                     match ty {
