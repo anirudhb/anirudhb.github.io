@@ -33,7 +33,7 @@ fn main() -> anyhow::Result<()> {
             .parent()
             .context("Parent folder of config file")?,
     );
-    let processor = Processor::new(cfg);
+    let mut processor = Processor::new(cfg);
     processor.render_toplevel(args.force)?;
 
     Ok(())

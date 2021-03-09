@@ -26,6 +26,7 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
         let item = self.iter.next()?;
         let styles = &mut self.ctx.styles;
         let render_stack = &mut *self.ctx.render_stack;
+        let finished = self.ctx.finished;
         let out_dir = &self.ctx.config.roots.output;
         let base_dir = &self.ctx.config.roots.source;
         let filename = self.ctx.filename;
@@ -71,12 +72,18 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
                                             "/{}",
                                             fname_for_url.with_extension("html").to_str().unwrap(),
                                         );
-                                        if !render_stack.contains(&fname) {
-                                            println!(
-                                                "walk: {}",
-                                                fname.to_str().unwrap_or("unknown")
-                                            );
-                                            render_stack.push(fname);
+                                        let input = RenderingInput::Other(fname);
+                                        if !render_stack.contains(&input)
+                                            && !finished.contains(&input)
+                                        {
+                                            match input {
+                                                RenderingInput::Other(ref fname) => println!(
+                                                    "walk: {}",
+                                                    fname.to_str().unwrap_or("unknown")
+                                                ),
+                                                _ => {}
+                                            }
+                                            render_stack.push(input);
                                         }
                                         Event::Start(Tag::Link(ty, new_location.into(), title))
                                         // link.url = new_location.into_bytes();
@@ -105,40 +112,68 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
 pub struct ProcessorContext<'a, 'b: 'a> {
     styles: &'a mut HashSet<&'b str>,
     filename: &'a Path,
-    render_stack: &'a mut Vec<PathBuf>,
     config: &'a ResolvedConfig,
+    finished: &'a HashSet<RenderingInput>,
+    render_stack: &'a mut Vec<RenderingInput>,
+}
+
+/// Rendering input
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub enum RenderingInput {
+    Index,
+    Keep,
+    Other(PathBuf),
 }
 
 /// Processes files
 pub struct Processor {
     /// Stuff is derived from this
     config: ResolvedConfig,
+    // next items to render
+    render_stack: Vec<RenderingInput>,
+    // items that have already been rendered
+    finished: HashSet<RenderingInput>,
 }
 
 impl Processor {
     pub fn new(config: ResolvedConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            render_stack: Default::default(),
+            finished: Default::default(),
+        }
     }
 
-    pub fn render_index(&self, force: bool) -> anyhow::Result<()> {
-        self.render(&self.config.inputs.index, "", force)
-    }
-
-    pub fn render_keep(&self, force: bool) -> anyhow::Result<()> {
-        self.render(&self.config.inputs.keep, "", force)
-    }
-
-    pub fn render_toplevel(&self, force: bool) -> anyhow::Result<()> {
-        self.render_index(force)?;
-        self.render_keep(force)?;
+    pub fn render_toplevel(&mut self, force: bool) -> anyhow::Result<()> {
+        self.render_stack.extend(std::array::IntoIter::new([
+            RenderingInput::Index,
+            RenderingInput::Keep,
+        ]));
+        self.render_all(force)?;
         Ok(())
     }
 
-    pub fn render(&self, filename: &Path, base: &str, force: bool) -> anyhow::Result<()> {
+    fn render_all(&mut self, force: bool) -> anyhow::Result<()> {
+        while !self.render_stack.is_empty() {
+            let stack = std::mem::take(&mut self.render_stack);
+            for input in stack {
+                println!("RENDER: {:?}", input);
+                self.render(input, force)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn render(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
         let out_dir = &self.config.roots.output;
         let base_dir = &self.config.roots.source;
         let style_chunks_root = &self.config.lib.styles.chunks_root;
         let prelude_html = &self.config.lib.prelude_location;
+        let filename = match input {
+            RenderingInput::Index => &self.config.inputs.index,
+            RenderingInput::Keep => &self.config.inputs.keep,
+            RenderingInput::Other(ref o) => o,
+        };
 
         if !filename.exists() {
             println!(
@@ -179,7 +214,6 @@ impl Processor {
             h.insert("_global");
             h
         };
-        let mut stack = Vec::new();
 
         let html = {
             let parser = Parser::new(&buf);
@@ -187,7 +221,8 @@ impl Processor {
                 filename,
                 styles: &mut styles,
                 config: &self.config,
-                render_stack: &mut stack,
+                finished: &self.finished,
+                render_stack: &mut self.render_stack,
             };
             let adapter = RenderAdapter {
                 ctx: &mut ctx,
@@ -292,12 +327,7 @@ impl Processor {
             }
         }
 
-        // write stack
-        for fname in stack {
-            let base_add = fname.strip_prefix(&base_dir).unwrap();
-            let new_base = format!("{}/{}", base, base_add.to_str().unwrap());
-            self.render(&fname, &new_base, force)?;
-        }
+        self.finished.insert(input);
 
         Ok(())
     }
