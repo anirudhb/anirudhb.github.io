@@ -12,6 +12,7 @@ use std::{
 use anyhow::Context;
 use image::ImageFormat;
 use pulldown_cmark::{html, Event, LinkType, Parser, Tag};
+use regex::{Captures, Regex};
 use reqwest::blocking::Client;
 use url::Url;
 
@@ -161,6 +162,13 @@ pub enum RenderingInput {
         // Will be output to /images/{output}.webp
         output: String,
     },
+    Font {
+        input: Url,
+        // Will be output to /fonts/{output}
+        output: String,
+    },
+    // CSS(chunk_name)
+    Style(&'static str),
     Page(PathBuf),
 }
 
@@ -289,6 +297,149 @@ impl Processor {
         Ok(())
     }
 
+    fn render_style(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
+        let sname = match input {
+            RenderingInput::Style(sname) => sname,
+            _ => panic!("Expected style input"),
+        };
+        let path = self
+            .config
+            .lib
+            .styles
+            .chunks_root
+            .join(sname)
+            .with_extension("css");
+        let out_path = self
+            .config
+            .roots
+            .output
+            .join("css")
+            .join(sname)
+            .with_extension("css");
+
+        if !path.exists() {
+            println!(
+                "File {} doesn't exist, nothing to do",
+                path.to_str().unwrap_or("unknown")
+            );
+            self.finished.insert(input);
+            return Ok(());
+        }
+
+        if !force
+            && out_path.exists()
+            && out_path.metadata()?.modified()? > path.metadata()?.modified()?
+        {
+            println!("fresh: {}", out_path.to_str().unwrap_or("unknown"));
+            self.finished.insert(input);
+            return Ok(());
+        }
+
+        // Read file and check for special decls
+        let buf = {
+            let mut s = String::new();
+            let mut f = File::open(&path)?;
+            f.read_to_string(&mut s)?;
+            s
+        };
+        let re = Regex::new(r"/\*\*.*@font (?P<url>\S+).*\*/")?;
+        let buf = re.replace_all(&buf, |capture: &Captures| {
+            let url = capture.name("url").unwrap();
+            // Fetch URL
+            let contents = {
+                let mut s = String::new();
+                let mut r = self.client.get(url.as_str()).send().unwrap();
+                r.read_to_string(&mut s).unwrap();
+                s
+            };
+            // Match font URLs inside...
+            let re2 = Regex::new(r"url\((?P<url>\S+)\)").unwrap();
+            let contents = re2.replace_all(&contents, |captures: &Captures| {
+                let input = captures.name("url").unwrap();
+                use sha2::Digest;
+                let hashname = format!("{:x}", sha2::Sha256::digest(input.as_str().as_bytes()));
+                let parsed = Url::parse(input.as_str()).unwrap();
+                let output_filename = format!(
+                    "{}.{}",
+                    hashname,
+                    parsed
+                        .path_segments()
+                        .unwrap()
+                        .last()
+                        .unwrap()
+                        .split(".")
+                        .last()
+                        .unwrap()
+                );
+                let input = RenderingInput::Font {
+                    input: parsed,
+                    output: output_filename,
+                };
+                let output_filename = match input {
+                    RenderingInput::Font { ref output, .. } => output,
+                    _ => unreachable!(),
+                };
+                let new_url = format!("url(/fonts/{})", output_filename);
+                if !self.render_stack.contains(&input) && !self.finished.contains(&input) {
+                    self.render_stack.push_front(input);
+                }
+                new_url
+            });
+            contents.to_string()
+        });
+
+        if let Some(p) = out_path.parent() {
+            std::fs::create_dir_all(p)?;
+        }
+        // Minify style first
+        let minified_css = {
+            let minified =
+                html_minifier::css::minify(&buf).map_err(|_| anyhow::anyhow!("minify failed"))?;
+            println!(
+                "Minified {} bytes -> {} bytes ({:.3}%)",
+                buf.len(),
+                minified.len(),
+                (((minified.len() as f64) - (buf.len() as f64)) / buf.len() as f64) * 100.
+            );
+            Ok::<_, anyhow::Error>(minified)
+        }?;
+        let mut f = File::create(&out_path)?;
+        f.write_all(minified_css.as_bytes())?;
+
+        self.finished.insert(input);
+
+        Ok(())
+    }
+
+    fn render_font(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
+        // Just download the file to the given path
+        let (url, output) = match input {
+            RenderingInput::Font {
+                ref input,
+                ref output,
+            } => (input, output),
+            _ => panic!("Expected font"),
+        };
+        let out_path = self.config.roots.output.join("fonts").join(output);
+
+        if !force && out_path.exists() {
+            println!("fresh: {}", url.as_str());
+            self.finished.insert(input);
+            return Ok(());
+        }
+
+        let mut r = self.client.get(url.as_str()).send()?;
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut f = File::create(&out_path)?;
+        std::io::copy(&mut r, &mut f)?;
+
+        self.finished.insert(input);
+
+        Ok(())
+    }
+
     fn render(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
         let out_dir = &self.config.roots.output;
         let base_dir = &self.config.roots.source;
@@ -297,6 +448,8 @@ impl Processor {
         let filename = match input {
             RenderingInput::Index => &self.config.inputs.index,
             RenderingInput::Keep => &self.config.inputs.keep,
+            RenderingInput::Style(..) => return self.render_style(input, force),
+            RenderingInput::Font { .. } => return self.render_font(input, force),
             RenderingInput::Image { .. } => return self.render_image(input, force),
             RenderingInput::Page(ref o) => o,
         };
@@ -365,29 +518,11 @@ impl Processor {
             for sname in styles.into_iter() {
                 let path = style_chunks_root.join(sname).with_extension("css");
                 // skip missing files
-                if let Ok(path) = AsRef::<Path>::as_ref(&path).canonicalize() {
+                if let Ok(_) = AsRef::<Path>::as_ref(&path).canonicalize() {
                     let css_out_path = out_dir.join("css").join(sname).with_extension("css");
-                    if let Some(p) = css_out_path.parent() {
-                        std::fs::create_dir_all(p)?;
-                    }
-                    // Minify style first
-                    let minified_css = {
-                        let mut s = String::new();
-                        let mut f = File::open(&path)?;
-                        f.read_to_string(&mut s)?;
-                        let minified = html_minifier::css::minify(&s)
-                            .map_err(|_| anyhow::anyhow!("minify failed"))?;
-                        println!(
-                            "Minified {} bytes -> {} bytes ({:.3}%)",
-                            s.len(),
-                            minified.len(),
-                            (((minified.len() as f64) - (s.len() as f64)) / s.len() as f64) * 100.
-                        );
-                        Ok::<_, anyhow::Error>(minified)
-                    }?;
-                    {
-                        let mut f = File::create(&css_out_path)?;
-                        f.write_all(minified_css.as_bytes())?;
+                    let input = RenderingInput::Style(sname);
+                    if !self.render_stack.contains(&input) && !self.finished.contains(&input) {
+                        self.render_stack.push_front(input);
                     }
                     new_styles.push(format!(
                         r#"
