@@ -578,8 +578,8 @@ impl Processor {
                 std::fs::create_dir_all(p)?;
             }
 
-            if out_path.file_stem().unwrap().to_str().unwrap() == "_keep" {
-                println!("special: _keep, no output");
+            if input == RenderingInput::Keep {
+                println!("special: keep file, no output");
             } else {
                 let mut f = File::create(&out_path)?;
                 f.write_all(minified.as_bytes())?;
