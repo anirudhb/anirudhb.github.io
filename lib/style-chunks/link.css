@@ -1,0 +1,10 @@
+a,
+a:visited {
+  color: #c432ad;
+  text-decoration: none;
+  font-size: inherit;
+}
+
+a:hover {
+  text-decoration: underline;
+}
