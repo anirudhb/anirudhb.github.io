@@ -14,6 +14,7 @@ use image::ImageFormat;
 use pulldown_cmark::{html, Event, LinkType, Parser, Tag};
 use regex::{Captures, Regex};
 use reqwest::blocking::Client;
+use tracing::{event, instrument, Level};
 use url::Url;
 
 use crate::config::ResolvedConfig;
@@ -26,6 +27,7 @@ struct RenderAdapter<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> {
 impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'a, 'b, 'c, I> {
     type Item = Event<'b>;
 
+    #[instrument(name = "process", skip(self))]
     fn next(&mut self) -> Option<Self::Item> {
         let item = self.iter.next()?;
         let styles = &mut self.ctx.styles;
@@ -112,10 +114,9 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
                                             && !finished.contains(&input)
                                         {
                                             match input {
-                                                RenderingInput::Page(ref fname) => println!(
-                                                    "walk: {}",
-                                                    fname.to_str().unwrap_or("unknown")
-                                                ),
+                                                RenderingInput::Page(ref fname) => {
+                                                    event!(Level::INFO, r#type = "walk", ?fname)
+                                                }
                                                 _ => {}
                                             }
                                             render_stack.push_back(input);
@@ -123,7 +124,7 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
                                         Event::Start(Tag::Link(ty, new_location.into(), title))
                                         // link.url = new_location.into_bytes();
                                     } else {
-                                        println!("Couldn't resolve hyperref: {}", url);
+                                        event!(Level::WARN, r#type = "invalid_hyperref", %url);
                                         Event::Start(Tag::Link(ty, url, title))
                                     }
                                 } else {
@@ -173,6 +174,7 @@ pub enum RenderingInput {
 }
 
 /// Processes files
+#[derive(Debug)]
 pub struct Processor {
     /// Stuff is derived from this
     config: ResolvedConfig,
@@ -194,6 +196,7 @@ impl Processor {
         }
     }
 
+    #[instrument(level = Level::INFO, skip(self))]
     pub fn render_toplevel(&mut self, force: bool) -> anyhow::Result<()> {
         self.render_stack.push_front(RenderingInput::Index);
         self.render_stack.push_front(RenderingInput::Keep);
@@ -201,14 +204,16 @@ impl Processor {
         Ok(())
     }
 
+    #[instrument(level = Level::INFO, skip(self))]
     fn render_all(&mut self, force: bool) -> anyhow::Result<()> {
         while let Some(input) = self.render_stack.pop_front() {
-            println!("RENDER: {:?}", input);
+            event!(Level::INFO, r#type = "render", ?input);
             self.render(input, force)?;
         }
         Ok(())
     }
 
+    #[instrument(level = Level::INFO, skip(self), name = "process_image")]
     fn render_image(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
         let (inp, out) = match input {
             RenderingInput::Image {
@@ -221,7 +226,7 @@ impl Processor {
         let out_path = self.config.roots.output.join("images").join(out);
 
         if out_path.exists() && !force {
-            println!("fresh: {}", out_path.to_str().unwrap_or("unknown"));
+            event!(Level::INFO, r#type = "fresh", path = ?out_path);
             self.finished.insert(input);
             return Ok(());
         }
@@ -266,7 +271,6 @@ impl Processor {
                 // Convert to WebP, then write to file.
                 let mut v = Vec::new();
                 reader.read_to_end(&mut v)?;
-                println!("img size = {} bytes", v.len());
                 let cursor = Cursor::new(&v);
                 let mut img_in = image::io::Reader::new(cursor);
                 img_in.set_format(img_type);
@@ -278,25 +282,24 @@ impl Processor {
                 let encoder = webp::Encoder::from_image(&decoded);
                 let mem = encoder.encode(75.);
                 f.write_all(&mem)?;
-                println!(
-                    "Processed to WebP: {} bytes -> {} bytes ({:.3}%)",
-                    v.len(),
-                    mem.len(),
-                    ((mem.len() as f64) - (v.len() as f64)) / (v.len() as f64) * 100.
+                event!(
+                    Level::INFO,
+                    r#type = "webp_process",
+                    initial_len = v.len(),
+                    new_len = mem.len(),
+                    change = %((mem.len() as f64) - (v.len() as f64)) / (v.len() as f64) * 100.
                 );
             }
         }
 
         let end_time = Instant::now();
-        println!(
-            "Image processed in {:.2} seconds!",
-            (end_time - start_time).as_secs_f64()
-        );
+        event!(Level::INFO, r#type = "image_process", path = ?out_path, time = %(end_time - start_time).as_secs_f64());
 
         self.finished.insert(input);
         Ok(())
     }
 
+    #[instrument(level = Level::INFO, skip(self), name = "process_style")]
     fn render_style(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
         let sname = match input {
             RenderingInput::Style(sname) => sname,
@@ -318,10 +321,7 @@ impl Processor {
             .with_extension("css");
 
         if !path.exists() {
-            println!(
-                "File {} doesn't exist, nothing to do",
-                path.to_str().unwrap_or("unknown")
-            );
+            event!(Level::INFO, r#type = "nonexistent_source", ?path);
             self.finished.insert(input);
             return Ok(());
         }
@@ -330,7 +330,7 @@ impl Processor {
             && out_path.exists()
             && out_path.metadata()?.modified()? > path.metadata()?.modified()?
         {
-            println!("fresh: {}", out_path.to_str().unwrap_or("unknown"));
+            event!(Level::INFO, r#type = "fresh", path = ?out_path);
             self.finished.insert(input);
             return Ok(());
         }
@@ -395,11 +395,12 @@ impl Processor {
         let minified_css = {
             let minified =
                 html_minifier::css::minify(&buf).map_err(|_| anyhow::anyhow!("minify failed"))?;
-            println!(
-                "Minified {} bytes -> {} bytes ({:.3}%)",
-                buf.len(),
-                minified.len(),
-                (((minified.len() as f64) - (buf.len() as f64)) / buf.len() as f64) * 100.
+            event!(
+                Level::INFO,
+                r#type = "minified",
+                in_len = buf.len(),
+                new_len = minified.len(),
+                change = %(((minified.len() as f64) - (buf.len() as f64)) / buf.len() as f64) * 100.
             );
             Ok::<_, anyhow::Error>(minified)
         }?;
@@ -407,10 +408,12 @@ impl Processor {
         f.write_all(minified_css.as_bytes())?;
 
         self.finished.insert(input);
+        event!(Level::INFO, r#type = "new", path = ?out_path);
 
         Ok(())
     }
 
+    #[instrument(level = Level::INFO, skip(self), name = "process_font")]
     fn render_font(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
         // Just download the file to the given path
         let (url, output) = match input {
@@ -423,7 +426,7 @@ impl Processor {
         let out_path = self.config.roots.output.join("fonts").join(output);
 
         if !force && out_path.exists() {
-            println!("fresh: {}", url.as_str());
+            event!(Level::INFO, r#type = "fresh", %url);
             self.finished.insert(input);
             return Ok(());
         }
@@ -436,10 +439,12 @@ impl Processor {
         std::io::copy(&mut r, &mut f)?;
 
         self.finished.insert(input);
+        event!(Level::INFO, r#type = "new", path = ?out_path);
 
         Ok(())
     }
 
+    #[instrument(level = Level::INFO, skip(self))]
     fn render(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
         let out_dir = &self.config.roots.output;
         let base_dir = &self.config.roots.source;
@@ -455,10 +460,7 @@ impl Processor {
         };
 
         if !filename.exists() {
-            println!(
-                "nonexistent: {}, nothing to do",
-                filename.to_str().unwrap_or("unknown")
-            );
+            event!(Level::INFO, r#type = "nonexistent_source", path = ?filename);
             return Ok(());
         }
 
@@ -479,7 +481,6 @@ impl Processor {
         let out_path = out_dir
             .join(filename.strip_prefix(&base_dir)?)
             .with_extension("html");
-        println!("out: {}", out_path.to_str().unwrap_or("unknown"));
 
         let buf = {
             let mut s = String::new();
@@ -541,7 +542,6 @@ impl Processor {
             Ok::<_, std::io::Error>(new_styles)
         }?;
         let html = {
-            println!("path = {}", prelude_html.to_str().unwrap_or("unknown"));
             let mut f = File::open(prelude_html)?;
             let mut s = String::new();
             f.read_to_string(&mut s)?;
@@ -553,11 +553,12 @@ impl Processor {
         // Minify HTML
         let minified = html_minifier::minify(&html)?;
 
-        println!(
-            "Minified {} bytes -> {} bytes ({:.3}%)",
-            html.len(),
-            minified.len(),
-            (((minified.len() as f64) - (html.len() as f64)) / html.len() as f64) * 100.
+        event!(
+            Level::INFO,
+            r#type = "minified",
+            in_len = html.len(),
+            new_len = minified.len(),
+            change = %(((minified.len() as f64) - (html.len() as f64)) / html.len() as f64) * 100.
         );
 
         // write only if file doesn't exist
@@ -571,7 +572,7 @@ impl Processor {
         };
         if !needs_update && !force {
             // nothing to do
-            println!("fresh: {}", out_path.to_str().unwrap_or("unknown"));
+            event!(Level::INFO, r#type = "fresh", path = ?out_path);
         } else {
             // first, recursively create parents
             if let Some(p) = out_path.parent() {
@@ -579,12 +580,12 @@ impl Processor {
             }
 
             if input == RenderingInput::Keep {
-                println!("special: keep file, no output");
+                event!(Level::INFO, r#type = "special_keep", path = ?out_path);
             } else {
                 let mut f = File::create(&out_path)?;
                 f.write_all(minified.as_bytes())?;
                 // println!("{}", html);
-                println!("new: {}", out_path.to_str().unwrap_or("unknown"));
+                event!(Level::INFO, r#type = "new", path = ?out_path);
             }
         }
 

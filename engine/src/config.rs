@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::util::PathHelper;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct Config {
     // Basic roots
@@ -18,7 +18,7 @@ pub struct Config {
     pub lib: Option<LibConfig>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct ResolvedConfig {
     // Basic roots
@@ -44,7 +44,7 @@ impl Config {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct RootsConfig {
     /// Source root
@@ -57,7 +57,7 @@ pub struct RootsConfig {
     pub output: PathBuf,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct ResolvedRootsConfig {
     /// Source root
@@ -90,7 +90,7 @@ impl RootsConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct InputsConfig {
     /// Index page
@@ -103,7 +103,7 @@ pub struct InputsConfig {
     pub keep: Option<PathBuf>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct ResolvedInputsConfig {
     /// Index page
@@ -129,7 +129,7 @@ impl InputsConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct LibConfig {
     /// Prelude location
@@ -140,7 +140,7 @@ pub struct LibConfig {
     pub styles: StylesConfig,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct ResolvedLibConfig {
     /// Prelude location
@@ -162,7 +162,7 @@ impl LibConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct StylesConfig {
     /// Style chunks root
@@ -181,7 +181,7 @@ pub struct StylesConfig {
     pub css: HashMap<String, PathBuf>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct ResolvedStylesConfig {
     /// Style chunks root

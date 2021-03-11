@@ -3,6 +3,7 @@ use std::{fs::File, io::Read};
 use anyhow::Context;
 use argh::FromArgs;
 use engine::{Config, Processor};
+use tracing::{event, instrument, Level};
 
 #[derive(FromArgs)]
 /// A simple site generator :)
@@ -15,12 +16,14 @@ struct Args {
     config_filename: std::path::PathBuf,
 }
 
+#[instrument]
 fn main() -> anyhow::Result<()> {
     let args = argh::from_env::<Args>();
-    println!(
-        "Input filename: {}",
-        args.config_filename.to_str().unwrap_or("unknown")
-    );
+
+    let format = tracing_subscriber::fmt::format().pretty();
+    tracing_subscriber::fmt().event_format(format).init();
+
+    event!(Level::INFO, input_filename = ?args.config_filename);
     let cfg = {
         let mut f = File::open(&args.config_filename)?;
         let mut s = String::new();
@@ -33,6 +36,7 @@ fn main() -> anyhow::Result<()> {
             .parent()
             .context("Parent folder of config file")?,
     );
+    event!(Level::DEBUG, config = ?cfg);
     let mut processor = Processor::new(cfg);
     processor.render_toplevel(args.force)?;
 
