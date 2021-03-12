@@ -137,7 +137,7 @@ pub struct LibConfig {
     /// If none, defaults to the prelude.html file in the lib root
     pub prelude_location: Option<PathBuf>,
     // Style config
-    pub styles: StylesConfig,
+    pub styles: Option<StylesConfig>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -157,7 +157,10 @@ impl LibConfig {
                 .map(|x| x.maybe_suffix(config_folder))
                 .unwrap_or_else(|| lib_root.join("prelude.html"))
                 .maybe_canonicalize(),
-            styles: self.styles.resolve(lib_root, config_folder),
+            styles: self
+                .styles
+                .unwrap_or_default()
+                .resolve(lib_root, config_folder),
         }
     }
 }
