@@ -4,12 +4,15 @@
 
 use std::{
     collections::{HashSet, VecDeque},
+    future::Future,
     io::Cursor,
     path::{Path, PathBuf},
     pin::Pin,
+    task::Poll,
 };
 
 use anyhow::Context;
+use futures::{stream::FuturesUnordered, Stream};
 use image::ImageFormat;
 use pulldown_cmark::{html, Event, LinkType, Parser, Tag};
 use regex::{Captures, Regex};
@@ -19,7 +22,7 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
 };
 use tokio_util::compat::FuturesAsyncReadCompatExt;
-use tracing::{event, instrument, Level};
+use tracing::{event, instrument, Level, Span};
 use url::Url;
 
 use crate::config::ResolvedConfig;
@@ -191,6 +194,43 @@ pub struct Processor {
     client: Client,
 }
 
+/// Custom future that will do the polling stuff and all that
+/// Here be dragons...
+pub struct RenderAllFuture<'a> {
+    renderer: &'a mut Processor,
+    force: bool,
+    span: Span,
+    // TODO: get rid of the box
+    futs: FuturesUnordered<Pin<Box<dyn Future<Output = anyhow::Result<()>> + 'a>>>,
+}
+
+impl<'a> Future for RenderAllFuture<'a> {
+    type Output = anyhow::Result<()>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let force = self.force;
+        if let Some(input) = self.renderer.render_stack.pop_back() {
+            event!(Level::INFO, r#type = "render", ?input);
+            let fut = self.renderer.render(input, force);
+            let fut_box: Pin<Box<dyn Future<Output = anyhow::Result<()>>>> = Box::pin(fut);
+            let fut_box = unsafe { std::mem::transmute(fut_box) };
+            self.futs.push(fut_box);
+        }
+        let futs = unsafe { Pin::new_unchecked(&mut self.futs) };
+        let res = futs.poll_next(cx);
+        match res {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(r) => match r {
+                Some(r) => match r {
+                    Err(e) => Poll::Ready(Err(e)),
+                    Ok(_) => Poll::Pending,
+                },
+                None => Poll::Ready(Ok(())),
+            },
+        }
+    }
+}
+
 impl Processor {
     pub fn new(config: ResolvedConfig) -> Self {
         Self {
@@ -209,13 +249,15 @@ impl Processor {
         Ok(())
     }
 
-    #[instrument(level = Level::INFO, skip(self))]
-    async fn render_all(&mut self, force: bool) -> anyhow::Result<()> {
-        while let Some(input) = self.render_stack.pop_front() {
-            event!(Level::INFO, r#type = "render", ?input);
-            self.render(input, force).await?;
-        }
-        Ok(())
+    fn render_all<'a>(&'a mut self, force: bool) -> impl Future<Output = anyhow::Result<()>> + 'a {
+        let span = tracing::span!(Level::INFO, "render_all", force);
+        let fut = RenderAllFuture {
+            span,
+            force,
+            renderer: self,
+            futs: FuturesUnordered::new(),
+        };
+        fut
     }
 
     #[instrument(level = Level::INFO, skip(self), name = "process_image")]
