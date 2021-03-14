@@ -1,8 +1,7 @@
-use std::{fs::File, io::Read};
-
 use anyhow::Context;
 use argh::FromArgs;
 use engine::{Config, Processor};
+use tokio::{fs::File, io::AsyncReadExt};
 use tracing::{event, instrument, Level};
 
 #[derive(FromArgs)]
@@ -17,7 +16,8 @@ struct Args {
 }
 
 #[instrument]
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let args = argh::from_env::<Args>();
 
     let format = tracing_subscriber::fmt::format().pretty();
@@ -25,9 +25,9 @@ fn main() -> anyhow::Result<()> {
 
     event!(Level::INFO, input_filename = ?args.config_filename);
     let cfg = {
-        let mut f = File::open(&args.config_filename)?;
+        let mut f = File::open(&args.config_filename).await?;
         let mut s = String::new();
-        f.read_to_string(&mut s)?;
+        f.read_to_string(&mut s).await?;
         Ok::<_, anyhow::Error>(toml::from_str::<Config>(&s)?)
     }?
     .resolve(
@@ -38,7 +38,7 @@ fn main() -> anyhow::Result<()> {
     );
     event!(Level::DEBUG, config = ?cfg);
     let mut processor = Processor::new(cfg);
-    processor.render_toplevel(args.force)?;
+    processor.render_toplevel(args.force).await?;
 
     Ok(())
 }
