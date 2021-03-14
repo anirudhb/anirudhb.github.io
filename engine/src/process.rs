@@ -230,7 +230,7 @@ impl Processor {
         let out = PathBuf::from(out).with_extension("webp");
         let out_path = self.config.roots.output.join("images").join(out);
 
-        if out_path.exists() && !force {
+        if !force && tokio::fs::metadata(&out_path).await.is_ok() {
             event!(Level::INFO, r#type = "fresh", path = ?out_path);
             self.finished.insert(input);
             return Ok(());
@@ -282,7 +282,7 @@ impl Processor {
                 let mut img_in = image::io::Reader::new(cursor);
                 img_in.set_format(img_type);
                 if let Some(parent) = out_path.parent() {
-                    std::fs::create_dir_all(parent)?;
+                    tokio::fs::create_dir_all(parent).await?;
                 }
                 let mut f = File::create(&out_path).await?;
                 let decoded = img_in.decode()?;
@@ -384,9 +384,10 @@ impl Processor {
             return Ok(());
         }
 
+        let out_path_metadata = tokio::fs::metadata(&out_path).await;
         if !force
-            && out_path.exists()
-            && out_path.metadata()?.modified()? > path.metadata()?.modified()?
+            && out_path_metadata.is_ok()
+            && out_path_metadata?.modified()? > tokio::fs::metadata(&path).await?.modified()?
         {
             event!(Level::INFO, r#type = "fresh", path = ?out_path);
             self.finished.insert(input);
@@ -422,6 +423,8 @@ impl Processor {
                     // unwrap on 0 is OK because captures only reports matches
                     let m = cap.get(0).unwrap();
                     new.push_str(&text[last_match..m.start()]);
+                    // NOTE: unfortunately can't parallelize this since state is dependent on previous iterations...
+                    // TODO: Work a little harder to figure out a way to parallelize this
                     new.push_str(self._style_regex_replacer(&cap).await?.as_ref());
                     last_match = m.end();
                 }
@@ -431,7 +434,7 @@ impl Processor {
         }?;
 
         if let Some(p) = out_path.parent() {
-            std::fs::create_dir_all(p)?;
+            tokio::fs::create_dir_all(p).await?;
         }
         // Minify style first
         let minified_css = {
@@ -467,7 +470,7 @@ impl Processor {
         };
         let out_path = self.config.roots.output.join("fonts").join(output);
 
-        if !force && out_path.exists() {
+        if !force && tokio::fs::metadata(&out_path).await.is_ok() {
             event!(Level::INFO, r#type = "fresh", %url);
             self.finished.insert(input);
             return Ok(());
@@ -514,7 +517,7 @@ impl Processor {
 
         // create out dir if doesn't exist
         if !out_dir.exists() {
-            std::fs::create_dir_all(out_dir)?;
+            tokio::fs::create_dir_all(out_dir).await?;
         }
         // // canonicalize paths
         // let (filename, base_dir, out_dir) = (
@@ -610,9 +613,10 @@ impl Processor {
         );
 
         // write only if file doesn't exist
-        let needs_update = if let (Ok(out_metadata), Ok(in_metadata)) =
-            (out_path.metadata(), filename.metadata())
-        {
+        let needs_update = if let (Ok(out_metadata), Ok(in_metadata)) = (
+            tokio::fs::metadata(&out_path).await,
+            tokio::fs::metadata(&filename).await,
+        ) {
             in_metadata.modified()? >= out_metadata.modified()?
         } else {
             // failed to get metadata, or either path doesn't exist
@@ -624,7 +628,7 @@ impl Processor {
         } else {
             // first, recursively create parents
             if let Some(p) = out_path.parent() {
-                std::fs::create_dir_all(p)?;
+                tokio::fs::create_dir_all(p).await?;
             }
 
             if input == RenderingInput::Keep {
