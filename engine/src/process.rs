@@ -213,9 +213,12 @@ impl<'a> Future for RenderAllFuture<'a> {
             event!(Level::INFO, r#type = "render", ?input);
             let fut = this.renderer.render(input, force);
             let fut_box: Pin<Box<dyn Future<Output = anyhow::Result<()>>>> = Box::pin(fut);
+            // SAFETY: this is safe since this.renderer is &'a mut Processor,
+            // therefore we can guarantee that the future also lives as long.
             let fut_box = unsafe { std::mem::transmute(fut_box) };
             this.futs.push(fut_box);
         }
+        let is_last_future = this.futs.len() == 1;
         let futs = Pin::new(&mut this.futs);
         let res = futs.poll_next(cx);
         match res {
@@ -228,7 +231,11 @@ impl<'a> Future for RenderAllFuture<'a> {
                         // 1) Remaining inputs are added to the FuturesUnordered
                         // 2) Futures can be polled again
                         cx.waker().wake_by_ref();
-                        Poll::Pending
+                        if is_last_future {
+                            Poll::Ready(Ok(()))
+                        } else {
+                            Poll::Pending
+                        }
                     }
                 },
                 None => Poll::Ready(Ok(())),
