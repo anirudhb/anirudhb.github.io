@@ -215,7 +215,8 @@ impl<'a> Future for RenderAllFuture<'a> {
             let fut_box: Pin<Box<dyn Future<Output = anyhow::Result<()>>>> = Box::pin(fut);
             // SAFETY: this is safe since this.renderer is &'a mut Processor,
             // therefore we can guarantee that the future also lives as long.
-            let fut_box = unsafe { std::mem::transmute(fut_box) };
+            let fut_box: Pin<Box<dyn Future<Output = anyhow::Result<()>> + 'a>> =
+                unsafe { std::mem::transmute(fut_box) };
             this.futs.push(fut_box);
         }
         let is_last_future = this.futs.len() == 1;
