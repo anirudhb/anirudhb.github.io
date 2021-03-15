@@ -22,7 +22,7 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
 };
 use tokio_util::compat::FuturesAsyncReadCompatExt;
-use tracing::{event, instrument, Level, Span};
+use tracing::{event, instrument, Level};
 use url::Url;
 
 use crate::config::ResolvedConfig;
@@ -199,7 +199,6 @@ pub struct Processor {
 pub struct RenderAllFuture<'a> {
     renderer: &'a mut Processor,
     force: bool,
-    span: Span,
     // TODO: get rid of the box
     futs: FuturesUnordered<Pin<Box<dyn Future<Output = anyhow::Result<()>> + 'a>>>,
 }
@@ -207,23 +206,31 @@ pub struct RenderAllFuture<'a> {
 impl<'a> Future for RenderAllFuture<'a> {
     type Output = anyhow::Result<()>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let force = self.force;
-        if let Some(input) = self.renderer.render_stack.pop_back() {
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        let force = this.force;
+        while let Some(input) = this.renderer.render_stack.pop_back() {
             event!(Level::INFO, r#type = "render", ?input);
-            let fut = self.renderer.render(input, force);
+            let fut = this.renderer.render(input, force);
             let fut_box: Pin<Box<dyn Future<Output = anyhow::Result<()>>>> = Box::pin(fut);
             let fut_box = unsafe { std::mem::transmute(fut_box) };
-            self.futs.push(fut_box);
+            this.futs.push(fut_box);
         }
-        let futs = unsafe { Pin::new_unchecked(&mut self.futs) };
+        let is_last_future = this.futs.len() == 1;
+        let futs = Pin::new(&mut this.futs);
         let res = futs.poll_next(cx);
         match res {
             Poll::Pending => Poll::Pending,
             Poll::Ready(r) => match r {
                 Some(r) => match r {
                     Err(e) => Poll::Ready(Err(e)),
-                    Ok(_) => Poll::Pending,
+                    Ok(_) => {
+                        if is_last_future {
+                            Poll::Ready(Ok(()))
+                        } else {
+                            Poll::Pending
+                        }
+                    }
                 },
                 None => Poll::Ready(Ok(())),
             },
@@ -250,14 +257,14 @@ impl Processor {
     }
 
     fn render_all<'a>(&'a mut self, force: bool) -> impl Future<Output = anyhow::Result<()>> + 'a {
+        use tracing::Instrument;
         let span = tracing::span!(Level::INFO, "render_all", force);
         let fut = RenderAllFuture {
-            span,
             force,
             renderer: self,
             futs: FuturesUnordered::new(),
         };
-        fut
+        fut.instrument(span)
     }
 
     #[instrument(level = Level::INFO, skip(self), name = "process_image")]

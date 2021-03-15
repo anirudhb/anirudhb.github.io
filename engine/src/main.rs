@@ -3,6 +3,7 @@ use argh::FromArgs;
 use engine::{Config, Processor};
 use tokio::{fs::File, io::AsyncReadExt};
 use tracing::{event, instrument, Level};
+use tracing_subscriber::EnvFilter;
 
 #[derive(FromArgs)]
 /// A simple site generator :)
@@ -21,7 +22,10 @@ async fn main() -> anyhow::Result<()> {
     let args = argh::from_env::<Args>();
 
     let format = tracing_subscriber::fmt::format().pretty();
-    tracing_subscriber::fmt().event_format(format).init();
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .event_format(format)
+        .init();
 
     event!(Level::INFO, input_filename = ?args.config_filename);
     let cfg = {
