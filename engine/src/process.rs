@@ -4,16 +4,24 @@
 
 use std::{
     collections::{HashSet, VecDeque},
-    fs::File,
-    io::{Cursor, Read, Write},
+    future::Future,
+    io::Cursor,
     path::{Path, PathBuf},
+    pin::Pin,
+    task::Poll,
 };
 
 use anyhow::Context;
+use futures::{stream::FuturesUnordered, Stream};
 use image::ImageFormat;
 use pulldown_cmark::{html, Event, LinkType, Parser, Tag};
 use regex::{Captures, Regex};
-use reqwest::blocking::Client;
+use surf::Client;
+use tokio::{
+    fs::File,
+    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
+};
+use tokio_util::compat::FuturesAsyncReadCompatExt;
 use tracing::{event, instrument, Level};
 use url::Url;
 
@@ -186,6 +194,56 @@ pub struct Processor {
     client: Client,
 }
 
+/// Custom future that will do the polling stuff and all that
+/// Here be dragons...
+pub struct RenderAllFuture<'a> {
+    renderer: &'a mut Processor,
+    force: bool,
+    // TODO: get rid of the box
+    futs: FuturesUnordered<Pin<Box<dyn Future<Output = anyhow::Result<()>> + 'a>>>,
+}
+
+impl<'a> Future for RenderAllFuture<'a> {
+    type Output = anyhow::Result<()>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        let force = this.force;
+        while let Some(input) = this.renderer.render_stack.pop_back() {
+            event!(Level::INFO, r#type = "render", ?input);
+            let fut = this.renderer.render(input, force);
+            let fut_box: Pin<Box<dyn Future<Output = anyhow::Result<()>>>> = Box::pin(fut);
+            // SAFETY: this is safe since this.renderer is &'a mut Processor,
+            // therefore we can guarantee that the future also lives as long.
+            let fut_box = unsafe { std::mem::transmute(fut_box) };
+            this.futs.push(fut_box);
+        }
+        let is_last_future = this.futs.len() == 1;
+        let futs = Pin::new(&mut this.futs);
+        let res = futs.poll_next(cx);
+        match res {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(r) => match r {
+                Some(r) => match r {
+                    Err(e) => Poll::Ready(Err(e)),
+                    Ok(_) => {
+                        // Forces this future to be polled again so that
+                        // 1) Remaining inputs are added to the FuturesUnordered
+                        // 2) Futures can be polled again
+                        cx.waker().wake_by_ref();
+                        if is_last_future {
+                            Poll::Ready(Ok(()))
+                        } else {
+                            Poll::Pending
+                        }
+                    }
+                },
+                None => Poll::Ready(Ok(())),
+            },
+        }
+    }
+}
+
 impl Processor {
     pub fn new(config: ResolvedConfig) -> Self {
         Self {
@@ -197,24 +255,26 @@ impl Processor {
     }
 
     #[instrument(level = Level::INFO, skip(self))]
-    pub fn render_toplevel(&mut self, force: bool) -> anyhow::Result<()> {
+    pub async fn render_toplevel(&mut self, force: bool) -> anyhow::Result<()> {
         self.render_stack.push_front(RenderingInput::Index);
         self.render_stack.push_front(RenderingInput::Keep);
-        self.render_all(force)?;
+        self.render_all(force).await?;
         Ok(())
     }
 
-    #[instrument(level = Level::INFO, skip(self))]
-    fn render_all(&mut self, force: bool) -> anyhow::Result<()> {
-        while let Some(input) = self.render_stack.pop_front() {
-            event!(Level::INFO, r#type = "render", ?input);
-            self.render(input, force)?;
-        }
-        Ok(())
+    fn render_all<'a>(&'a mut self, force: bool) -> impl Future<Output = anyhow::Result<()>> + 'a {
+        use tracing::Instrument;
+        let span = tracing::span!(Level::INFO, "render_all", force);
+        let fut = RenderAllFuture {
+            force,
+            renderer: self,
+            futs: FuturesUnordered::new(),
+        };
+        fut.instrument(span)
     }
 
     #[instrument(level = Level::INFO, skip(self), name = "process_image")]
-    fn render_image(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
+    async fn render_image(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
         let (inp, out) = match input {
             RenderingInput::Image {
                 ref input,
@@ -225,38 +285,40 @@ impl Processor {
         let out = PathBuf::from(out).with_extension("webp");
         let out_path = self.config.roots.output.join("images").join(out);
 
-        if out_path.exists() && !force {
+        if !force && tokio::fs::metadata(&out_path).await.is_ok() {
             event!(Level::INFO, r#type = "fresh", path = ?out_path);
             self.finished.insert(input);
             return Ok(());
         }
 
-        let (mut reader, img_type): (Box<dyn Read>, ImageFormat) = if inp.scheme() == "file" {
-            let path = inp.to_file_path().ok().context("URL to file path")?;
-            let f = File::open(&path)?;
-            (Box::new(f), ImageFormat::from_path(&path)?)
-        } else {
-            // fetch the url
-            let r = self.client.get(inp.as_str()).send()?;
-            let content_type = r
-                .headers()
-                .get(reqwest::header::CONTENT_TYPE)
-                .context("Get image content type")?
-                .to_str()?;
-            let img_type = match content_type {
-                "image/webp" => ImageFormat::WebP,
-                "image/png" => ImageFormat::Png,
-                "image/jpeg" => ImageFormat::Jpeg,
-                "image/gif" => ImageFormat::Gif,
-                _ => {
-                    return Err(anyhow::anyhow!(
-                        "Unknown content type for image: {}",
-                        content_type
-                    ))
-                }
+        let (mut reader, img_type): (Pin<Box<dyn AsyncRead>>, ImageFormat) =
+            if inp.scheme() == "file" {
+                let path = inp.to_file_path().ok().context("URL to file path")?;
+                let f = File::open(&path).await?;
+                (Box::pin(f), ImageFormat::from_path(&path)?)
+            } else {
+                // fetch the url
+                let r = self
+                    .client
+                    .get(inp.as_str())
+                    .send()
+                    .await
+                    .map_err(|_| anyhow::anyhow!("fetch failed"))?;
+                let content_type = &r.header("Content-Type").context("Get image content type")?[0];
+                let img_type = match content_type.as_str() {
+                    "image/webp" => ImageFormat::WebP,
+                    "image/png" => ImageFormat::Png,
+                    "image/jpeg" => ImageFormat::Jpeg,
+                    "image/gif" => ImageFormat::Gif,
+                    _ => {
+                        return Err(anyhow::anyhow!(
+                            "Unknown content type for image: {}",
+                            content_type
+                        ))
+                    }
+                };
+                (Box::pin(r.compat()), img_type)
             };
-            (Box::new(r), img_type)
-        };
 
         use std::time::Instant;
         let start_time = Instant::now();
@@ -264,24 +326,24 @@ impl Processor {
         match img_type {
             ImageFormat::WebP => {
                 // Directly copy to the file.
-                let mut f = File::create(&out_path)?;
-                std::io::copy(&mut reader, &mut f)?;
+                let mut f = File::create(&out_path).await?;
+                tokio::io::copy(&mut reader, &mut f).await?;
             }
             img_type => {
                 // Convert to WebP, then write to file.
                 let mut v = Vec::new();
-                reader.read_to_end(&mut v)?;
+                reader.read_to_end(&mut v).await?;
                 let cursor = Cursor::new(&v);
                 let mut img_in = image::io::Reader::new(cursor);
                 img_in.set_format(img_type);
                 if let Some(parent) = out_path.parent() {
-                    std::fs::create_dir_all(parent)?;
+                    tokio::fs::create_dir_all(parent).await?;
                 }
-                let mut f = File::create(&out_path)?;
+                let mut f = File::create(&out_path).await?;
                 let decoded = img_in.decode()?;
                 let encoder = webp::Encoder::from_image(&decoded);
                 let mem = encoder.encode(75.);
-                f.write_all(&mem)?;
+                f.write_all(&mem).await?;
                 event!(
                     Level::INFO,
                     r#type = "webp_process",
@@ -299,8 +361,59 @@ impl Processor {
         Ok(())
     }
 
+    async fn _style_regex_replacer(&mut self, capture: &Captures<'_>) -> anyhow::Result<String> {
+        let url = capture.name("url").unwrap();
+        // Fetch URL
+        let contents = {
+            let mut s = String::new();
+            let mut r = self
+                .client
+                .get(url.as_str())
+                .send()
+                .await
+                .map_err(|_| anyhow::anyhow!("fetch failed"))?
+                .compat();
+            r.read_to_string(&mut s).await?;
+            s
+        };
+        // Match font URLs inside...
+        let re2 = Regex::new(r"url\((?P<url>\S+)\)").unwrap();
+        let contents = re2.replace_all(&contents, |captures: &Captures| {
+            let input = captures.name("url").unwrap();
+            use sha2::Digest;
+            let hashname = format!("{:x}", sha2::Sha256::digest(input.as_str().as_bytes()));
+            let parsed = Url::parse(input.as_str()).unwrap();
+            let output_filename = format!(
+                "{}.{}",
+                hashname,
+                parsed
+                    .path_segments()
+                    .unwrap()
+                    .last()
+                    .unwrap()
+                    .split(".")
+                    .last()
+                    .unwrap()
+            );
+            let input = RenderingInput::Font {
+                input: parsed,
+                output: output_filename,
+            };
+            let output_filename = match input {
+                RenderingInput::Font { ref output, .. } => output,
+                _ => unreachable!(),
+            };
+            let new_url = format!("url(/fonts/{})", output_filename);
+            if !self.render_stack.contains(&input) && !self.finished.contains(&input) {
+                self.render_stack.push_front(input);
+            }
+            new_url
+        });
+        Ok(contents.to_string())
+    }
+
     #[instrument(level = Level::INFO, skip(self), name = "process_style")]
-    fn render_style(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
+    async fn render_style(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
         let sname = match input {
             RenderingInput::Style(sname) => sname,
             _ => panic!("Expected style input"),
@@ -326,9 +439,10 @@ impl Processor {
             return Ok(());
         }
 
+        let out_path_metadata = tokio::fs::metadata(&out_path).await;
         if !force
-            && out_path.exists()
-            && out_path.metadata()?.modified()? > path.metadata()?.modified()?
+            && out_path_metadata.is_ok()
+            && out_path_metadata?.modified()? > tokio::fs::metadata(&path).await?.modified()?
         {
             event!(Level::INFO, r#type = "fresh", path = ?out_path);
             self.finished.insert(input);
@@ -338,58 +452,44 @@ impl Processor {
         // Read file and check for special decls
         let buf = {
             let mut s = String::new();
-            let mut f = File::open(&path)?;
-            f.read_to_string(&mut s)?;
+            let mut f = File::open(&path).await?;
+            f.read_to_string(&mut s).await?;
             s
         };
         let re = Regex::new(r"/\*\*.*@font (?P<url>\S+).*\*/")?;
-        let buf = re.replace_all(&buf, |capture: &Captures| {
-            let url = capture.name("url").unwrap();
-            // Fetch URL
-            let contents = {
-                let mut s = String::new();
-                let mut r = self.client.get(url.as_str()).send().unwrap();
-                r.read_to_string(&mut s).unwrap();
-                s
-            };
-            // Match font URLs inside...
-            let re2 = Regex::new(r"url\((?P<url>\S+)\)").unwrap();
-            let contents = re2.replace_all(&contents, |captures: &Captures| {
-                let input = captures.name("url").unwrap();
-                use sha2::Digest;
-                let hashname = format!("{:x}", sha2::Sha256::digest(input.as_str().as_bytes()));
-                let parsed = Url::parse(input.as_str()).unwrap();
-                let output_filename = format!(
-                    "{}.{}",
-                    hashname,
-                    parsed
-                        .path_segments()
-                        .unwrap()
-                        .last()
-                        .unwrap()
-                        .split(".")
-                        .last()
-                        .unwrap()
-                );
-                let input = RenderingInput::Font {
-                    input: parsed,
-                    output: output_filename,
-                };
-                let output_filename = match input {
-                    RenderingInput::Font { ref output, .. } => output,
-                    _ => unreachable!(),
-                };
-                let new_url = format!("url(/fonts/{})", output_filename);
-                if !self.render_stack.contains(&input) && !self.finished.contains(&input) {
-                    self.render_stack.push_front(input);
+
+        // src/regex/re_unicode.rs:569-588, regex crate
+        // The slower path, which we use if the replacement needs access to
+        // capture groups.
+        let buf = {
+            use std::borrow::Cow;
+            let text = &buf;
+            let limit = 0;
+            let mut it = re.captures_iter(text).enumerate().peekable();
+            if it.peek().is_none() {
+                Ok::<_, anyhow::Error>(Cow::Borrowed(text))
+            } else {
+                let mut new = String::with_capacity(text.len());
+                let mut last_match = 0;
+                for (i, cap) in it {
+                    if limit > 0 && i >= limit {
+                        break;
+                    }
+                    // unwrap on 0 is OK because captures only reports matches
+                    let m = cap.get(0).unwrap();
+                    new.push_str(&text[last_match..m.start()]);
+                    // NOTE: unfortunately can't parallelize this since state is dependent on previous iterations...
+                    // TODO: Work a little harder to figure out a way to parallelize this
+                    new.push_str(self._style_regex_replacer(&cap).await?.as_ref());
+                    last_match = m.end();
                 }
-                new_url
-            });
-            contents.to_string()
-        });
+                new.push_str(&text[last_match..]);
+                Ok(Cow::Owned(new))
+            }
+        }?;
 
         if let Some(p) = out_path.parent() {
-            std::fs::create_dir_all(p)?;
+            tokio::fs::create_dir_all(p).await?;
         }
         // Minify style first
         let minified_css = {
@@ -404,8 +504,8 @@ impl Processor {
             );
             Ok::<_, anyhow::Error>(minified)
         }?;
-        let mut f = File::create(&out_path)?;
-        f.write_all(minified_css.as_bytes())?;
+        let mut f = File::create(&out_path).await?;
+        f.write_all(minified_css.as_bytes()).await?;
 
         self.finished.insert(input);
         event!(Level::INFO, r#type = "new", path = ?out_path);
@@ -414,7 +514,7 @@ impl Processor {
     }
 
     #[instrument(level = Level::INFO, skip(self), name = "process_font")]
-    fn render_font(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
+    async fn render_font(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
         // Just download the file to the given path
         let (url, output) = match input {
             RenderingInput::Font {
@@ -425,18 +525,24 @@ impl Processor {
         };
         let out_path = self.config.roots.output.join("fonts").join(output);
 
-        if !force && out_path.exists() {
+        if !force && tokio::fs::metadata(&out_path).await.is_ok() {
             event!(Level::INFO, r#type = "fresh", %url);
             self.finished.insert(input);
             return Ok(());
         }
 
-        let mut r = self.client.get(url.as_str()).send()?;
+        let mut r = self
+            .client
+            .get(url.as_str())
+            .send()
+            .await
+            .map_err(|_| anyhow::anyhow!("fetch failed"))?
+            .compat();
         if let Some(parent) = out_path.parent() {
-            std::fs::create_dir_all(parent)?;
+            tokio::fs::create_dir_all(parent).await?;
         }
-        let mut f = File::create(&out_path)?;
-        std::io::copy(&mut r, &mut f)?;
+        let mut f = File::create(&out_path).await?;
+        tokio::io::copy(&mut r, &mut f).await?;
 
         self.finished.insert(input);
         event!(Level::INFO, r#type = "new", path = ?out_path);
@@ -445,7 +551,7 @@ impl Processor {
     }
 
     #[instrument(level = Level::INFO, skip(self))]
-    fn render(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
+    async fn render(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
         let out_dir = &self.config.roots.output;
         let base_dir = &self.config.roots.source;
         let style_chunks_root = &self.config.lib.styles.chunks_root;
@@ -453,9 +559,9 @@ impl Processor {
         let filename = match input {
             RenderingInput::Index => &self.config.inputs.index,
             RenderingInput::Keep => &self.config.inputs.keep,
-            RenderingInput::Style(..) => return self.render_style(input, force),
-            RenderingInput::Font { .. } => return self.render_font(input, force),
-            RenderingInput::Image { .. } => return self.render_image(input, force),
+            RenderingInput::Style(..) => return self.render_style(input, force).await,
+            RenderingInput::Font { .. } => return self.render_font(input, force).await,
+            RenderingInput::Image { .. } => return self.render_image(input, force).await,
             RenderingInput::Page(ref o) => o,
         };
 
@@ -466,7 +572,7 @@ impl Processor {
 
         // create out dir if doesn't exist
         if !out_dir.exists() {
-            std::fs::create_dir_all(out_dir)?;
+            tokio::fs::create_dir_all(out_dir).await?;
         }
         // // canonicalize paths
         // let (filename, base_dir, out_dir) = (
@@ -484,8 +590,8 @@ impl Processor {
 
         let buf = {
             let mut s = String::new();
-            let mut f = File::open(&filename)?;
-            f.read_to_string(&mut s)?;
+            let mut f = File::open(&filename).await?;
+            f.read_to_string(&mut s).await?;
             Ok::<_, std::io::Error>(s)
         }?;
 
@@ -542,9 +648,9 @@ impl Processor {
             Ok::<_, std::io::Error>(new_styles)
         }?;
         let html = {
-            let mut f = File::open(prelude_html)?;
+            let mut f = File::open(prelude_html).await?;
             let mut s = String::new();
-            f.read_to_string(&mut s)?;
+            f.read_to_string(&mut s).await?;
             Ok::<_, std::io::Error>(s)
         }?
         .replace("@@@SLOT_STYLES@@@", &format!("\n{}\n", styles.join("\n")))
@@ -562,9 +668,10 @@ impl Processor {
         );
 
         // write only if file doesn't exist
-        let needs_update = if let (Ok(out_metadata), Ok(in_metadata)) =
-            (out_path.metadata(), filename.metadata())
-        {
+        let needs_update = if let (Ok(out_metadata), Ok(in_metadata)) = (
+            tokio::fs::metadata(&out_path).await,
+            tokio::fs::metadata(&filename).await,
+        ) {
             in_metadata.modified()? >= out_metadata.modified()?
         } else {
             // failed to get metadata, or either path doesn't exist
@@ -576,14 +683,14 @@ impl Processor {
         } else {
             // first, recursively create parents
             if let Some(p) = out_path.parent() {
-                std::fs::create_dir_all(p)?;
+                tokio::fs::create_dir_all(p).await?;
             }
 
             if input == RenderingInput::Keep {
                 event!(Level::INFO, r#type = "special_keep", path = ?out_path);
             } else {
-                let mut f = File::create(&out_path)?;
-                f.write_all(minified.as_bytes())?;
+                let mut f = File::create(&out_path).await?;
+                f.write_all(minified.as_bytes()).await?;
                 // println!("{}", html);
                 event!(Level::INFO, r#type = "new", path = ?out_path);
             }
