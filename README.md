@@ -22,6 +22,8 @@ Output is in out/
 Feel free to use my engine for your own websites :)
 Note that the engine is licensed under AGPLv3 (my website is all rights reserved.)
 
+The engine processes Markdown files into generated HTML that can be served as a static site.
+
 ## Configuration
 
 To get started create a `config.toml` file that specifies some locations such as the location of styles, sources and outputs:
