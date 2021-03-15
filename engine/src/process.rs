@@ -216,7 +216,6 @@ impl<'a> Future for RenderAllFuture<'a> {
             let fut_box = unsafe { std::mem::transmute(fut_box) };
             this.futs.push(fut_box);
         }
-        let is_last_future = this.futs.len() == 1;
         let futs = Pin::new(&mut this.futs);
         let res = futs.poll_next(cx);
         match res {
@@ -225,11 +224,11 @@ impl<'a> Future for RenderAllFuture<'a> {
                 Some(r) => match r {
                     Err(e) => Poll::Ready(Err(e)),
                     Ok(_) => {
-                        if is_last_future {
-                            Poll::Ready(Ok(()))
-                        } else {
-                            Poll::Pending
-                        }
+                        // Forces this future to be polled again so that
+                        // 1) Remaining inputs are added to the FuturesUnordered
+                        // 2) Futures can be polled again
+                        cx.waker().wake_by_ref();
+                        Poll::Pending
                     }
                 },
                 None => Poll::Ready(Ok(())),
