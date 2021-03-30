@@ -25,7 +25,6 @@ use tracing::{event, instrument, Level};
 use url::Url;
 
 use crate::config::ResolvedConfig;
-use crate::webp::ThreadSafeWebP;
 
 struct RenderAdapter<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> {
     ctx: &'a mut ProcessorContext<'a, 'c>,
@@ -331,15 +330,23 @@ impl Processor {
                 }
                 let mut f = File::create(&out_path).await?;
                 let decoded = img_in.decode()?;
-                let encoder = webp::Encoder::from_image(&decoded);
-                let mem = encoder.threadsafe_encode(75.);
-                f.write_all(&mem).await?;
+                // WebP encoding has to be done on a separate thread since it is !Send
+                let (tx2, mut rx2) = tokio::sync::mpsc::unbounded_channel();
+                std::thread::spawn(move || {
+                    let encoder = webp::Encoder::from_image(&decoded);
+                    let mem = encoder.encode(75.);
+                    tx2.send(mem.to_vec()).unwrap();
+                });
+                // let encoder = webp::Encoder::from_image(&decoded);
+                // let mem = encoder.threadsafe_encode(75.);
+                let res = rx2.recv().await.unwrap();
+                f.write_all(&res).await?;
                 event!(
                     Level::INFO,
                     r#type = "webp_process",
                     initial_len = v.len(),
-                    new_len = mem.len(),
-                    change = %((mem.len() as f64) - (v.len() as f64)) / (v.len() as f64) * 100.
+                    new_len = res.len(),
+                    change = %((res.len() as f64) - (v.len() as f64)) / (v.len() as f64) * 100.
                 );
             }
         }
