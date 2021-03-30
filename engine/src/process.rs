@@ -4,15 +4,13 @@
 
 use std::{
     collections::{HashSet, VecDeque},
-    future::Future,
     io::Cursor,
     path::{Path, PathBuf},
     pin::Pin,
-    task::Poll,
+    sync::Arc,
 };
 
 use anyhow::Context;
-use futures::{stream::FuturesUnordered, Stream};
 use image::ImageFormat;
 use pulldown_cmark::{html, Event, LinkType, Parser, Tag};
 use regex::{Captures, Regex};
@@ -20,12 +18,14 @@ use surf::Client;
 use tokio::{
     fs::File,
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
+    sync::{mpsc::UnboundedSender, Mutex, RwLock},
 };
 use tokio_util::compat::FuturesAsyncReadCompatExt;
 use tracing::{event, instrument, Level};
 use url::Url;
 
 use crate::config::ResolvedConfig;
+use crate::webp::ThreadSafeWebP;
 
 struct RenderAdapter<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> {
     ctx: &'a mut ProcessorContext<'a, 'c>,
@@ -39,6 +39,7 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
     fn next(&mut self) -> Option<Self::Item> {
         let item = self.iter.next()?;
         let styles = &mut self.ctx.styles;
+        let new_stack = &mut *self.ctx.new_stack;
         let render_stack = &mut *self.ctx.render_stack;
         let finished = self.ctx.finished;
         let out_dir = &self.ctx.config.roots.output;
@@ -62,7 +63,8 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
                                     output: hashname,
                                 };
                                 if !render_stack.contains(&input) && !finished.contains(&input) {
-                                    render_stack.push_front(input);
+                                    render_stack.insert(input.clone());
+                                    new_stack.push_back(input);
                                 }
                                 Event::Start(Tag::Image(ty, new_url.into(), title))
                             } else {
@@ -127,7 +129,8 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
                                                 }
                                                 _ => {}
                                             }
-                                            render_stack.push_back(input);
+                                            render_stack.insert(input.clone());
+                                            new_stack.push_back(input);
                                         }
                                         Event::Start(Tag::Link(ty, new_location.into(), title))
                                         // link.url = new_location.into_bytes();
@@ -158,7 +161,9 @@ pub struct ProcessorContext<'a, 'b: 'a> {
     filename: &'a Path,
     config: &'a ResolvedConfig,
     finished: &'a HashSet<RenderingInput>,
-    render_stack: &'a mut VecDeque<RenderingInput>,
+    render_stack: &'a mut HashSet<RenderingInput>,
+    new_stack: &'a mut VecDeque<RenderingInput>,
+    // tx: UnboundedSender<anyhow::Result<()>>,
 }
 
 /// Rendering input
@@ -186,96 +191,78 @@ pub enum RenderingInput {
 pub struct Processor {
     /// Stuff is derived from this
     config: ResolvedConfig,
-    // next items to render
-    render_stack: VecDeque<RenderingInput>,
+    // items that are currently being rendered
+    render_stack: Mutex<HashSet<RenderingInput>>,
     // items that have already been rendered
-    finished: HashSet<RenderingInput>,
+    finished: RwLock<HashSet<RenderingInput>>,
     // request client
     client: Client,
 }
 
-/// Custom future that will do the polling stuff and all that
-/// Here be dragons...
-pub struct RenderAllFuture<'a> {
-    renderer: &'a mut Processor,
-    force: bool,
-    // TODO: get rid of the box
-    futs: FuturesUnordered<Pin<Box<dyn Future<Output = anyhow::Result<()>> + 'a>>>,
-}
-
-impl<'a> Future for RenderAllFuture<'a> {
-    type Output = anyhow::Result<()>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        let force = this.force;
-        while let Some(input) = this.renderer.render_stack.pop_back() {
-            event!(Level::INFO, r#type = "render", ?input);
-            let fut = this.renderer.render(input, force);
-            let fut_box: Pin<Box<dyn Future<Output = anyhow::Result<()>>>> = Box::pin(fut);
-            // SAFETY: this is safe since this.renderer is &'a mut Processor,
-            // therefore we can guarantee that the future also lives as long.
-            let fut_box: Pin<Box<dyn Future<Output = anyhow::Result<()>> + 'a>> =
-                unsafe { std::mem::transmute(fut_box) };
-            this.futs.push(fut_box);
-        }
-        let is_last_future = this.futs.len() == 1;
-        let futs = Pin::new(&mut this.futs);
-        let res = futs.poll_next(cx);
-        match res {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(r) => match r {
-                Some(r) => match r {
-                    Err(e) => Poll::Ready(Err(e)),
-                    Ok(_) => {
-                        // Forces this future to be polled again so that
-                        // 1) Remaining inputs are added to the FuturesUnordered
-                        // 2) Futures can be polled again
-                        cx.waker().wake_by_ref();
-                        if is_last_future {
-                            Poll::Ready(Ok(()))
-                        } else {
-                            Poll::Pending
-                        }
-                    }
-                },
-                None => Poll::Ready(Ok(())),
-            },
-        }
-    }
-}
-
 impl Processor {
-    pub fn new(config: ResolvedConfig) -> Self {
-        Self {
+    pub fn new(config: ResolvedConfig) -> Arc<Self> {
+        Arc::new(Self {
             config,
             render_stack: Default::default(),
             finished: Default::default(),
             client: Client::new(),
-        }
+        })
     }
 
     #[instrument(level = Level::INFO, skip(self))]
-    pub async fn render_toplevel(&mut self, force: bool) -> anyhow::Result<()> {
-        self.render_stack.push_front(RenderingInput::Index);
-        self.render_stack.push_front(RenderingInput::Keep);
+    pub async fn render_toplevel(self: Arc<Self>, force: bool) -> anyhow::Result<()> {
+        {
+            let mut stack = self.render_stack.lock().await;
+            stack.insert(RenderingInput::Index);
+            stack.insert(RenderingInput::Keep);
+        }
         self.render_all(force).await?;
         Ok(())
     }
 
-    fn render_all<'a>(&'a mut self, force: bool) -> impl Future<Output = anyhow::Result<()>> + 'a {
-        use tracing::Instrument;
-        let span = tracing::span!(Level::INFO, "render_all", force);
-        let fut = RenderAllFuture {
-            force,
-            renderer: self,
-            futs: FuturesUnordered::new(),
+    fn spawn_input(
+        self: Arc<Self>,
+        force: bool,
+        input: RenderingInput,
+        tx: UnboundedSender<anyhow::Result<()>>,
+    ) {
+        tokio::spawn(async move {
+            let r = self.render(input, force, tx.clone()).await;
+            tx.send(r).unwrap();
+        });
+    }
+
+    #[instrument(level = Level::INFO, skip(self))]
+    async fn render_all(self: Arc<Self>, force: bool) -> anyhow::Result<()> {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let stack = {
+            let mut s = self.render_stack.lock().await;
+            std::mem::take(&mut *s)
         };
-        fut.instrument(span)
+        for input in stack {
+            let tx = tx.clone();
+            let this = self.clone();
+            this.spawn_input(force, input, tx);
+            // tokio::spawn(async move {
+            //     tx.send(this.render(input, force).await).unwrap();
+            // });
+        }
+
+        drop(tx);
+
+        while let Some(res) = rx.recv().await {
+            res?;
+        }
+
+        Ok(())
     }
 
     #[instrument(level = Level::INFO, skip(self), name = "process_image")]
-    async fn render_image(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
+    async fn render_image(
+        self: Arc<Self>,
+        input: RenderingInput,
+        force: bool,
+    ) -> anyhow::Result<()> {
         let (inp, out) = match input {
             RenderingInput::Image {
                 ref input,
@@ -288,11 +275,12 @@ impl Processor {
 
         if !force && tokio::fs::metadata(&out_path).await.is_ok() {
             event!(Level::INFO, r#type = "fresh", path = ?out_path);
-            self.finished.insert(input);
+            self.render_stack.lock().await.remove(&input);
+            self.finished.write().await.insert(input);
             return Ok(());
         }
 
-        let (mut reader, img_type): (Pin<Box<dyn AsyncRead>>, ImageFormat) =
+        let (mut reader, img_type): (Pin<Box<dyn AsyncRead + Send + Sync>>, ImageFormat) =
             if inp.scheme() == "file" {
                 let path = inp.to_file_path().ok().context("URL to file path")?;
                 let f = File::open(&path).await?;
@@ -343,7 +331,7 @@ impl Processor {
                 let mut f = File::create(&out_path).await?;
                 let decoded = img_in.decode()?;
                 let encoder = webp::Encoder::from_image(&decoded);
-                let mem = encoder.encode(75.);
+                let mem = encoder.threadsafe_encode(75.);
                 f.write_all(&mem).await?;
                 event!(
                     Level::INFO,
@@ -358,11 +346,17 @@ impl Processor {
         let end_time = Instant::now();
         event!(Level::INFO, r#type = "image_process", path = ?out_path, time = %(end_time - start_time).as_secs_f64());
 
-        self.finished.insert(input);
+        self.render_stack.lock().await.remove(&input);
+        self.finished.write().await.insert(input);
         Ok(())
     }
 
-    async fn _style_regex_replacer(&mut self, capture: &Captures<'_>) -> anyhow::Result<String> {
+    async fn _style_regex_replacer(
+        self: Arc<Self>,
+        capture: &Captures<'_>,
+        force: bool,
+        tx: UnboundedSender<anyhow::Result<()>>,
+    ) -> anyhow::Result<String> {
         let url = capture.name("url").unwrap();
         // Fetch URL
         let contents = {
@@ -379,6 +373,8 @@ impl Processor {
         };
         // Match font URLs inside...
         let re2 = Regex::new(r"url\((?P<url>\S+)\)").unwrap();
+        let mut render_stack = self.render_stack.lock().await;
+        let finished = self.finished.read().await;
         let contents = re2.replace_all(&contents, |captures: &Captures| {
             let input = captures.name("url").unwrap();
             use sha2::Digest;
@@ -405,8 +401,9 @@ impl Processor {
                 _ => unreachable!(),
             };
             let new_url = format!("url(/fonts/{})", output_filename);
-            if !self.render_stack.contains(&input) && !self.finished.contains(&input) {
-                self.render_stack.push_front(input);
+            if !render_stack.contains(&input) && !finished.contains(&input) {
+                render_stack.insert(input.clone());
+                self.clone().spawn_input(force, input, tx.clone());
             }
             new_url
         });
@@ -414,7 +411,12 @@ impl Processor {
     }
 
     #[instrument(level = Level::INFO, skip(self), name = "process_style")]
-    async fn render_style(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
+    async fn render_style(
+        self: Arc<Self>,
+        input: RenderingInput,
+        force: bool,
+        tx: UnboundedSender<anyhow::Result<()>>,
+    ) -> anyhow::Result<()> {
         let sname = match input {
             RenderingInput::Style(sname) => sname,
             _ => panic!("Expected style input"),
@@ -436,7 +438,8 @@ impl Processor {
 
         if !path.exists() {
             event!(Level::INFO, r#type = "nonexistent_source", ?path);
-            self.finished.insert(input);
+            self.render_stack.lock().await.remove(&input);
+            self.finished.write().await.insert(input);
             return Ok(());
         }
 
@@ -446,7 +449,8 @@ impl Processor {
             && out_path_metadata?.modified()? > tokio::fs::metadata(&path).await?.modified()?
         {
             event!(Level::INFO, r#type = "fresh", path = ?out_path);
-            self.finished.insert(input);
+            self.render_stack.lock().await.remove(&input);
+            self.finished.write().await.insert(input);
             return Ok(());
         }
 
@@ -466,8 +470,8 @@ impl Processor {
             use std::borrow::Cow;
             let text = &buf;
             let limit = 0;
-            let mut it = re.captures_iter(text).enumerate().peekable();
-            if it.peek().is_none() {
+            let it = re.captures_iter(text).enumerate().collect::<Vec<_>>();
+            if it.len() <= 0 {
                 Ok::<_, anyhow::Error>(Cow::Borrowed(text))
             } else {
                 let mut new = String::with_capacity(text.len());
@@ -481,7 +485,12 @@ impl Processor {
                     new.push_str(&text[last_match..m.start()]);
                     // NOTE: unfortunately can't parallelize this since state is dependent on previous iterations...
                     // TODO: Work a little harder to figure out a way to parallelize this
-                    new.push_str(self._style_regex_replacer(&cap).await?.as_ref());
+                    new.push_str(
+                        self.clone()
+                            ._style_regex_replacer(&cap, force, tx.clone())
+                            .await?
+                            .as_ref(),
+                    );
                     last_match = m.end();
                 }
                 new.push_str(&text[last_match..]);
@@ -508,14 +517,19 @@ impl Processor {
         let mut f = File::create(&out_path).await?;
         f.write_all(minified_css.as_bytes()).await?;
 
-        self.finished.insert(input);
+        self.render_stack.lock().await.remove(&input);
+        self.finished.write().await.insert(input);
         event!(Level::INFO, r#type = "new", path = ?out_path);
 
         Ok(())
     }
 
     #[instrument(level = Level::INFO, skip(self), name = "process_font")]
-    async fn render_font(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
+    async fn render_font(
+        self: Arc<Self>,
+        input: RenderingInput,
+        force: bool,
+    ) -> anyhow::Result<()> {
         // Just download the file to the given path
         let (url, output) = match input {
             RenderingInput::Font {
@@ -528,7 +542,8 @@ impl Processor {
 
         if !force && tokio::fs::metadata(&out_path).await.is_ok() {
             event!(Level::INFO, r#type = "fresh", %url);
-            self.finished.insert(input);
+            self.render_stack.lock().await.remove(&input);
+            self.finished.write().await.insert(input);
             return Ok(());
         }
 
@@ -545,14 +560,20 @@ impl Processor {
         let mut f = File::create(&out_path).await?;
         tokio::io::copy(&mut r, &mut f).await?;
 
-        self.finished.insert(input);
+        self.render_stack.lock().await.remove(&input);
+        self.finished.write().await.insert(input);
         event!(Level::INFO, r#type = "new", path = ?out_path);
 
         Ok(())
     }
 
     #[instrument(level = Level::INFO, skip(self))]
-    async fn render(&mut self, input: RenderingInput, force: bool) -> anyhow::Result<()> {
+    async fn render(
+        self: Arc<Self>,
+        input: RenderingInput,
+        force: bool,
+        tx: UnboundedSender<anyhow::Result<()>>,
+    ) -> anyhow::Result<()> {
         let out_dir = &self.config.roots.output;
         let base_dir = &self.config.roots.source;
         let style_chunks_root = &self.config.lib.styles.chunks_root;
@@ -560,7 +581,7 @@ impl Processor {
         let filename = match input {
             RenderingInput::Index => &self.config.inputs.index,
             RenderingInput::Keep => &self.config.inputs.keep,
-            RenderingInput::Style(..) => return self.render_style(input, force).await,
+            RenderingInput::Style(..) => return self.render_style(input, force, tx).await,
             RenderingInput::Font { .. } => return self.render_font(input, force).await,
             RenderingInput::Image { .. } => return self.render_image(input, force).await,
             RenderingInput::Page(ref o) => o,
@@ -568,6 +589,8 @@ impl Processor {
 
         if !filename.exists() {
             event!(Level::INFO, r#type = "nonexistent_source", path = ?filename);
+            self.render_stack.lock().await.remove(&input);
+            self.finished.write().await.insert(input);
             return Ok(());
         }
 
@@ -603,13 +626,21 @@ impl Processor {
         };
 
         let html = {
+            let finished_guard = self.finished.read().await;
+            let mut render_stack = self.render_stack.lock().await;
+
+            /* No awaits from here... */
+
             let parser = Parser::new(&buf);
+            let mut new_stack = VecDeque::new();
             let mut ctx = ProcessorContext {
                 filename,
                 styles: &mut styles,
                 config: &self.config,
-                finished: &self.finished,
-                render_stack: &mut self.render_stack,
+                finished: &finished_guard,
+                // tx: tx.clone(),
+                render_stack: &mut render_stack,
+                new_stack: &mut new_stack,
             };
             let adapter = RenderAdapter {
                 ctx: &mut ctx,
@@ -618,10 +649,19 @@ impl Processor {
 
             let mut s = String::new();
             html::push_html(&mut s, adapter);
+
+            /* ...to here. */
+
+            for input in new_stack {
+                self.clone().spawn_input(force, input, tx.clone());
+            }
+
             s
         };
 
         let styles = {
+            let mut render_stack = self.render_stack.lock().await;
+            let finished = self.finished.read().await;
             let mut new_styles = Vec::new();
             for sname in styles.into_iter() {
                 let path = style_chunks_root.join(sname).with_extension("css");
@@ -629,8 +669,9 @@ impl Processor {
                 if let Ok(_) = AsRef::<Path>::as_ref(&path).canonicalize() {
                     let css_out_path = out_dir.join("css").join(sname).with_extension("css");
                     let input = RenderingInput::Style(sname);
-                    if !self.render_stack.contains(&input) && !self.finished.contains(&input) {
-                        self.render_stack.push_front(input);
+                    if !render_stack.contains(&input) && !finished.contains(&input) {
+                        render_stack.insert(input.clone());
+                        self.clone().spawn_input(force, input, tx.clone());
                     }
                     new_styles.push(format!(
                         r#"
@@ -697,7 +738,8 @@ impl Processor {
             }
         }
 
-        self.finished.insert(input);
+        self.render_stack.lock().await.remove(&input);
+        self.finished.write().await.insert(input);
 
         Ok(())
     }
