@@ -227,7 +227,10 @@ impl Processor {
         tx: UnboundedSender<anyhow::Result<()>>,
     ) {
         tokio::spawn(async move {
-            let r = self.render(input, force, tx.clone()).await;
+            let i2 = input.clone();
+            let r = self.clone().render(input, force, tx.clone()).await;
+            self.render_stack.lock().await.remove(&i2);
+            self.finished.write().await.insert(i2);
             tx.send(r).unwrap();
         });
     }
@@ -275,8 +278,6 @@ impl Processor {
 
         if !force && tokio::fs::metadata(&out_path).await.is_ok() {
             event!(Level::INFO, r#type = "fresh", path = ?out_path);
-            self.render_stack.lock().await.remove(&input);
-            self.finished.write().await.insert(input);
             return Ok(());
         }
 
@@ -346,8 +347,6 @@ impl Processor {
         let end_time = Instant::now();
         event!(Level::INFO, r#type = "image_process", path = ?out_path, time = %(end_time - start_time).as_secs_f64());
 
-        self.render_stack.lock().await.remove(&input);
-        self.finished.write().await.insert(input);
         Ok(())
     }
 
@@ -438,8 +437,6 @@ impl Processor {
 
         if !path.exists() {
             event!(Level::INFO, r#type = "nonexistent_source", ?path);
-            self.render_stack.lock().await.remove(&input);
-            self.finished.write().await.insert(input);
             return Ok(());
         }
 
@@ -449,8 +446,6 @@ impl Processor {
             && out_path_metadata?.modified()? > tokio::fs::metadata(&path).await?.modified()?
         {
             event!(Level::INFO, r#type = "fresh", path = ?out_path);
-            self.render_stack.lock().await.remove(&input);
-            self.finished.write().await.insert(input);
             return Ok(());
         }
 
@@ -517,8 +512,6 @@ impl Processor {
         let mut f = File::create(&out_path).await?;
         f.write_all(minified_css.as_bytes()).await?;
 
-        self.render_stack.lock().await.remove(&input);
-        self.finished.write().await.insert(input);
         event!(Level::INFO, r#type = "new", path = ?out_path);
 
         Ok(())
@@ -542,8 +535,6 @@ impl Processor {
 
         if !force && tokio::fs::metadata(&out_path).await.is_ok() {
             event!(Level::INFO, r#type = "fresh", %url);
-            self.render_stack.lock().await.remove(&input);
-            self.finished.write().await.insert(input);
             return Ok(());
         }
 
@@ -560,8 +551,6 @@ impl Processor {
         let mut f = File::create(&out_path).await?;
         tokio::io::copy(&mut r, &mut f).await?;
 
-        self.render_stack.lock().await.remove(&input);
-        self.finished.write().await.insert(input);
         event!(Level::INFO, r#type = "new", path = ?out_path);
 
         Ok(())
@@ -589,8 +578,6 @@ impl Processor {
 
         if !filename.exists() {
             event!(Level::INFO, r#type = "nonexistent_source", path = ?filename);
-            self.render_stack.lock().await.remove(&input);
-            self.finished.write().await.insert(input);
             return Ok(());
         }
 
@@ -737,9 +724,6 @@ impl Processor {
                 event!(Level::INFO, r#type = "new", path = ?out_path);
             }
         }
-
-        self.render_stack.lock().await.remove(&input);
-        self.finished.write().await.insert(input);
 
         Ok(())
     }
