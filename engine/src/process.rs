@@ -132,7 +132,6 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
                                             new_stack.push_back(input);
                                         }
                                         Event::Start(Tag::Link(ty, new_location.into(), title))
-                                        // link.url = new_location.into_bytes();
                                     } else {
                                         event!(Level::WARN, r#type = "invalid_hyperref", %url);
                                         Event::Start(Tag::Link(ty, url, title))
@@ -162,7 +161,6 @@ pub struct ProcessorContext<'a, 'b: 'a> {
     finished: &'a HashSet<RenderingInput>,
     render_stack: &'a mut HashSet<RenderingInput>,
     new_stack: &'a mut VecDeque<RenderingInput>,
-    // tx: UnboundedSender<anyhow::Result<()>>,
 }
 
 /// Rendering input
@@ -245,9 +243,6 @@ impl Processor {
             let tx = tx.clone();
             let this = self.clone();
             this.spawn_input(force, input, tx);
-            // tokio::spawn(async move {
-            //     tx.send(this.render(input, force).await).unwrap();
-            // });
         }
 
         drop(tx);
@@ -337,8 +332,6 @@ impl Processor {
                     let mem = encoder.encode(75.);
                     tx2.send(mem.to_vec()).unwrap();
                 });
-                // let encoder = webp::Encoder::from_image(&decoded);
-                // let mem = encoder.threadsafe_encode(75.);
                 let res = rx2.recv().await.unwrap();
                 f.write_all(&res).await?;
                 event!(
@@ -592,14 +585,6 @@ impl Processor {
         if !out_dir.exists() {
             tokio::fs::create_dir_all(out_dir).await?;
         }
-        // // canonicalize paths
-        // let (filename, base_dir, out_dir) = (
-        //     filename.as_ref().canonicalize()?,
-        //     base_dir.as_ref().canonicalize()?,
-        //     out_dir.as_ref().canonicalize()?,
-        // );
-        // as-ref paths
-        // let (filename, base_dir, out_dir) = (filename.as_ref(), base_dir.as_ref(), out_dir.as_ref());
 
         // NOTE: can't canonicalize here since the output path may not exist
         let out_path = out_dir
@@ -632,7 +617,6 @@ impl Processor {
                 styles: &mut styles,
                 config: &self.config,
                 finished: &finished_guard,
-                // tx: tx.clone(),
                 render_stack: &mut render_stack,
                 new_stack: &mut new_stack,
             };
