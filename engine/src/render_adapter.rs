@@ -20,7 +20,7 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
 
     #[instrument(name = "process", skip(self))]
     fn next(&mut self) -> Option<Self::Item> {
-        let item = self.iter.next()?;
+        let mut item = self.iter.next()?;
         let styles = &mut self.ctx.styles;
         let new_stack = &mut *self.ctx.new_stack;
         let render_stack = &mut *self.ctx.render_stack;
@@ -28,112 +28,86 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
         let out_dir = &self.ctx.config.roots.output;
         let base_dir = &self.ctx.config.roots.source;
         let filename = self.ctx.filename;
-        Some(match item {
-            Event::Start(tag) => match tag {
-                Tag::Image(ty, url, title) => {
-                    styles.insert("image");
-                    match ty {
-                        LinkType::Inline => {
-                            if let Ok(parsed) = Url::parse(&url) {
-                                use sha2::Digest;
-                                let hashname = format!(
-                                    "{:x}",
-                                    sha2::Sha256::digest(parsed.as_str().as_bytes())
-                                );
-                                let new_url = format!("/images/{}.webp", hashname);
-                                let input = RenderingInput::Image {
-                                    input: parsed,
-                                    output: hashname,
-                                };
-                                if !render_stack.contains(&input) && !finished.contains(&input) {
-                                    render_stack.insert(input.clone());
-                                    new_stack.push(input);
+        if let Event::Start(Tag::Image(..)) = item {
+            styles.insert("image");
+        }
+        if let Event::Start(Tag::Image(LinkType::Inline, ref mut url, _)) = item {
+            if let Ok(parsed) = Url::parse(&url) {
+                use sha2::Digest;
+                let hashname = format!("{:x}", sha2::Sha256::digest(parsed.as_str().as_bytes()));
+                let new_url = format!("/images/{}.webp", hashname);
+                let input = RenderingInput::Image {
+                    input: parsed,
+                    output: hashname,
+                };
+                if !render_stack.contains(&input) && !finished.contains(&input) {
+                    render_stack.insert(input.clone());
+                    new_stack.push(input);
+                }
+                *url = new_url.into();
+            }
+        }
+        if let Event::Start(Tag::Paragraph) = item {
+            styles.insert("paragraph");
+        }
+        if let Event::Start(Tag::Heading(level)) = item {
+            match level {
+                1 => {
+                    styles.insert("h1");
+                }
+                _ => {}
+            }
+        }
+        if let Event::Start(Tag::Link(..)) = item {
+            styles.insert("link");
+        }
+        if let Event::Start(Tag::Link(LinkType::Inline, ref mut url, _)) = item {
+            if let Ok(parsed) = Url::parse(&url) {
+                // check if scheme is hyperref, if so add to stack and rewrite url
+                if parsed.scheme() == "hyperref" {
+                    let parsed_path: &Path = parsed.path().as_ref();
+                    let fname: PathBuf = if parsed_path.is_absolute() {
+                        out_dir.join(parsed_path.strip_prefix("/").unwrap())
+                    } else {
+                        filename
+                            .parent()
+                            .unwrap_or("/".as_ref())
+                            .join(parsed.path())
+                    }
+                    .with_extension("md");
+                    #[cfg(target_os = "windows")]
+                    // replace with backslashes so that \\?\ isn't broken
+                    let fname: PathBuf = fname.to_str().unwrap().replace("/", "\\").into();
+                    if let Ok(fname) = fname.canonicalize() {
+                        let fname_for_url = fname.strip_prefix(&base_dir).unwrap();
+                        #[cfg(target_os = "windows")]
+                        // windows is dumb again
+                        let fname_for_url: PathBuf =
+                            fname_for_url.to_str().unwrap().replace("\\", "/").into();
+                        // figure out new location
+                        let new_location = format!(
+                            "/{}",
+                            fname_for_url.with_extension("html").to_str().unwrap(),
+                        );
+                        let input = RenderingInput::Page(fname);
+                        if !render_stack.contains(&input) && !finished.contains(&input) {
+                            match input {
+                                RenderingInput::Page(ref fname) => {
+                                    event!(Level::INFO, r#type = "walk", ?fname)
                                 }
-                                Event::Start(Tag::Image(ty, new_url.into(), title))
-                            } else {
-                                Event::Start(Tag::Image(ty, url, title))
+                                _ => {}
                             }
+                            render_stack.insert(input.clone());
+                            new_stack.push(input);
                         }
-                        _ => Event::Start(Tag::Image(ty, url, title)),
+                        *url = new_location.into();
+                    } else {
+                        event!(Level::WARN, r#type = "invalid_hyperref", %url);
                     }
                 }
-                p @ Tag::Paragraph => {
-                    styles.insert("paragraph");
-                    Event::Start(p)
-                }
-                Tag::Heading(level) => {
-                    match level {
-                        1 => {
-                            styles.insert("h1");
-                        }
-                        _ => {}
-                    }
-                    Event::Start(Tag::Heading(level))
-                }
-                Tag::Link(ty, url, title) => {
-                    styles.insert("link");
-                    match ty {
-                        LinkType::Inline => {
-                            if let Ok(parsed) = Url::parse(&url) {
-                                // check if scheme is hyperref, if so add to stack and rewrite url
-                                if parsed.scheme() == "hyperref" {
-                                    let parsed_path: &Path = parsed.path().as_ref();
-                                    let fname: PathBuf = if parsed_path.is_absolute() {
-                                        out_dir.join(parsed_path.strip_prefix("/").unwrap())
-                                    } else {
-                                        filename
-                                            .parent()
-                                            .unwrap_or("/".as_ref())
-                                            .join(parsed.path())
-                                    }
-                                    .with_extension("md");
-                                    #[cfg(target_os = "windows")]
-                                    // replace with backslashes so that \\?\ isn't broken
-                                    let fname: PathBuf =
-                                        fname.to_str().unwrap().replace("/", "\\").into();
-                                    if let Ok(fname) = fname.canonicalize() {
-                                        let fname_for_url = fname.strip_prefix(&base_dir).unwrap();
-                                        #[cfg(target_os = "windows")]
-                                    // windows is dumb again
-                                    let fname_for_url: PathBuf =
-                                        fname_for_url.to_str().unwrap().replace("\\", "/").into();
-                                        // figure out new location
-                                        let new_location = format!(
-                                            "/{}",
-                                            fname_for_url.with_extension("html").to_str().unwrap(),
-                                        );
-                                        let input = RenderingInput::Page(fname);
-                                        if !render_stack.contains(&input)
-                                            && !finished.contains(&input)
-                                        {
-                                            match input {
-                                                RenderingInput::Page(ref fname) => {
-                                                    event!(Level::INFO, r#type = "walk", ?fname)
-                                                }
-                                                _ => {}
-                                            }
-                                            render_stack.insert(input.clone());
-                                            new_stack.push(input);
-                                        }
-                                        Event::Start(Tag::Link(ty, new_location.into(), title))
-                                    } else {
-                                        event!(Level::WARN, r#type = "invalid_hyperref", %url);
-                                        Event::Start(Tag::Link(ty, url, title))
-                                    }
-                                } else {
-                                    Event::Start(Tag::Link(ty, url, title))
-                                }
-                            } else {
-                                Event::Start(Tag::Link(ty, url, title))
-                            }
-                        }
-                        _ => Event::Start(Tag::Link(ty, url, title)),
-                    }
-                }
-                t => Event::Start(t),
-            },
-            ev => ev,
-        })
+            }
+        }
+        Some(item)
     }
 }
 
