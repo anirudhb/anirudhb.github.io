@@ -484,13 +484,15 @@ impl Processor {
                 render_stack: &mut render_stack,
                 new_stack: &mut new_stack,
             };
-            let adapter = RenderAdapter {
-                ctx: &mut ctx,
-                iter: parser,
-            };
+            let mut adapter = RenderAdapter::new(parser, &mut ctx);
 
             let mut s = String::new();
-            html::push_html(&mut s, adapter);
+            html::push_html(&mut s, &mut adapter);
+
+            s = adapter.setup_header_links(&s);
+
+            let toc = adapter.render_toc();
+            s = format!("{}{}", toc, s);
 
             /* ...to here. */
 

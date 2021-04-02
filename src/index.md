@@ -10,3 +10,5 @@ Here's a little bit more content!
 [Click me for more puppies!](https://www.google.com/search?q=puppy&tbm=isch)
 
 [Go to my blog!](hyperref:blog)
+
+[Test out the TOC](hyperref:test_toc)

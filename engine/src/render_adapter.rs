@@ -1,9 +1,10 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
 };
 
-use pulldown_cmark::{Event, LinkType, Tag};
+use pulldown_cmark::{escape, Event, LinkType, Tag};
+use regex::{Captures, Regex};
 use tracing::{event, instrument, Level};
 use url::Url;
 
@@ -13,6 +14,100 @@ use crate::process::RenderingInput;
 pub struct RenderAdapter<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> {
     pub(crate) ctx: &'a mut ProcessorContext<'a, 'c>,
     pub(crate) iter: I,
+    // Table of contents
+    // level, title, slug
+    toc: Vec<(usize, String, String)>,
+    // Cache for header slugification
+    slugs_cache: HashMap<String, usize>,
+}
+
+const TOC_START: &'static str = r#"
+<section class="toc">
+    <h1>Table of contents</h1>
+"#;
+
+const TOC_END: &'static str = r#"
+</section>
+"#;
+
+impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> RenderAdapter<'a, 'b, 'c, I> {
+    pub fn new(iter: I, ctx: &'a mut ProcessorContext<'a, 'c>) -> Self {
+        Self {
+            iter,
+            ctx,
+            toc: Vec::new(),
+            slugs_cache: HashMap::new(),
+        }
+    }
+
+    // Converts a header title into a slug.
+    fn header_slug(&mut self, title: &str) -> String {
+        let fixed_up = title
+            .to_lowercase()
+            .replace(" ", "-")
+            .replace(|c: char| !c.is_alphanumeric(), "");
+        if self.slugs_cache.contains_key(&fixed_up) {
+            self.slugs_cache
+                .insert(fixed_up.clone(), self.slugs_cache[&fixed_up] + 1);
+            format!("{}{}", fixed_up, self.slugs_cache[&fixed_up])
+        } else {
+            self.slugs_cache.insert(fixed_up.clone(), 0);
+            format!("{}", fixed_up)
+        }
+    }
+
+    /// Sets up header links so that the TOC can be generated.
+    pub fn setup_header_links(&mut self, inp: &str) -> String {
+        let r = Regex::new(r"<h(\d)>(.*?)</h\d>").unwrap();
+        r.replace_all(inp, |caps: &Captures| {
+            let level = caps[1]
+                .parse::<usize>()
+                .expect("Only numbers can be parsed here");
+            let text = &caps[2];
+            let slug = self.header_slug(&text);
+            self.toc.push((level, text.to_string(), slug.clone()));
+            format!(r#"<h{0} id="{1}">{2}</h{0}>"#, level, slug, text)
+        })
+        .into_owned()
+    }
+
+    /// Renders the table of contents
+    /// and adds "toc" to the styles if necessary
+    pub fn render_toc(&mut self) -> String {
+        if self.toc.is_empty() {
+            return String::new();
+        }
+        self.ctx.styles.insert("toc");
+        self.ctx.styles.insert("link");
+        let mut s = String::new();
+        s.push_str(TOC_START);
+        let mut last_level = 0;
+        for (level, title, slug) in std::mem::take(&mut self.toc) {
+            if level > last_level {
+                s.push_str("<ol>");
+            }
+            if level < last_level {
+                s.push_str("</ol>");
+            }
+            let escaped_slug = {
+                let mut escaped = String::new();
+                escape::escape_href(&mut escaped, &slug).unwrap();
+                escaped
+            };
+            let escaped_title = {
+                let mut escaped = String::new();
+                escape::escape_html(&mut escaped, &title).unwrap();
+                escaped
+            };
+            s.push_str(&format!(
+                "<li><a href=\"#{}\">{}</a></li>",
+                escaped_slug, escaped_title
+            ));
+            last_level = level;
+        }
+        s.push_str(TOC_END);
+        s
+    }
 }
 
 impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'a, 'b, 'c, I> {
