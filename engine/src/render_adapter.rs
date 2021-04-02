@@ -105,6 +105,9 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> RenderAdapter<'a, 'b, 'c, I>
             ));
             last_level = level;
         }
+        for _ in 0..last_level {
+            s.push_str("</ol>");
+        }
         s.push_str(TOC_END);
         s
     }
