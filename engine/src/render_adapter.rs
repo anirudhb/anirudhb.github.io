@@ -66,9 +66,8 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> RenderAdapter<'a, 'b, 'c, I>
             .build()
             .unwrap();
         let r2 = Regex::new(r#"<pre(.*)>\n"#).unwrap();
-        let ss = SyntaxSet::load_defaults_newlines();
-        let themes = ThemeSet::load_defaults();
-        let theme = &themes.themes["base16-ocean.dark"];
+        let ss = self.ctx.ss;
+        let theme = &self.ctx.ts.themes["base16-ocean.dark"];
         r.replace_all(inp, |caps: &Captures| {
             self.ctx.styles.insert("code");
             let language_token = &caps[1];
@@ -260,4 +259,6 @@ pub struct ProcessorContext<'a, 'b: 'a> {
     pub(crate) finished: &'a DashSet<RenderingInput>,
     pub(crate) render_stack: &'a DashSet<RenderingInput>,
     pub(crate) new_stack: &'a mut Vec<RenderingInput>,
+    pub(crate) ss: &'a SyntaxSet,
+    pub(crate) ts: &'a ThemeSet,
 }

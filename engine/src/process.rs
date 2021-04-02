@@ -16,6 +16,7 @@ use image::ImageFormat;
 use pulldown_cmark::{html, Parser};
 use regex::{Captures, Regex};
 use surf::Client;
+use syntect::{highlighting::ThemeSet, parsing::SyntaxSet};
 use tokio::{
     fs::File,
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
@@ -59,6 +60,10 @@ pub struct Processor {
     finished: DashSet<RenderingInput>,
     // request client
     client: Client,
+    // syntax set
+    ss: SyntaxSet,
+    // theme set
+    ts: ThemeSet,
 }
 
 impl Processor {
@@ -68,6 +73,8 @@ impl Processor {
             render_stack: Default::default(),
             finished: Default::default(),
             client: Client::new(),
+            ss: SyntaxSet::load_defaults_newlines(),
+            ts: ThemeSet::load_defaults(),
         })
     }
 
@@ -477,6 +484,8 @@ impl Processor {
                 finished: &self.finished,
                 render_stack: &self.render_stack,
                 new_stack: &mut new_stack,
+                ss: &self.ss,
+                ts: &self.ts,
             };
             let mut adapter = RenderAdapter::new(parser, &mut ctx);
 
