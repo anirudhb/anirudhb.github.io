@@ -58,15 +58,18 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> RenderAdapter<'a, 'b, 'c, I>
     }
 
     /// Post processes syntax highlighting for code blocks
-    pub fn postprocess_syntax_highlighting(&self, inp: &str) -> String {
+    /// and adds "code" to styles if necessary
+    pub fn postprocess_syntax_highlighting(&mut self, inp: &str) -> String {
         let r = RegexBuilder::new(r#"<pre><code class="language-([^\n]+?)">(.*?)</code></pre>"#)
             .dot_matches_new_line(true)
             .build()
             .unwrap();
+        let r2 = Regex::new(r#"<pre(.*)>\n"#).unwrap();
         let ss = SyntaxSet::load_defaults_newlines();
         let themes = ThemeSet::load_defaults();
         let theme = &themes.themes["base16-ocean.dark"];
         r.replace_all(inp, |caps: &Captures| {
+            self.ctx.styles.insert("code");
             let language_token = &caps[1];
             let language_token = match language_token {
                 // TODO
@@ -82,10 +85,15 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> RenderAdapter<'a, 'b, 'c, I>
                 .find_syntax_by_token(language_token)
                 .expect("Could not find syntax for token!");
             let highlighted = syntect::html::highlighted_html_for_string(text, &ss, syntax, theme);
-            format!(
-                r#"<pre><code class="language-{0}">{1}</code></pre>"#,
-                language_token, highlighted
-            )
+            let highlighted = r2
+                .replace_all(&highlighted, |caps: &Captures| {
+                    format!(
+                        r#"<pre{0}><code class="language-{1}">"#,
+                        &caps[1], language_token
+                    )
+                })
+                .replace("</pre>", "</code></pre>");
+            highlighted
         })
         .into_owned()
     }
