@@ -35,7 +35,7 @@ source = "src"                                 # required
 lib = "lib"                                    # required
 assets = "assets"                              # required
 output = "out"                                 # required
-theme = "Visual Studio Code Dark+"             # optional
+theme = "Monokai"                              # optional
 
 [inputs]                                       # optional
 index = "${roots.source}/index.md"             # optional
@@ -115,10 +115,11 @@ This is especially beneficial when using HTTP/2 since latency is lower on first-
 
 engine includes syntax highlighting for code blocks by default.
 If a theme directory is specified in the config, additional TextMate themes (\*.tmTheme) will be loaded from the directory.
-By default, engine uses the `Visual Studio Code Dark+` theme, but this can be configured.
+By default, engine uses the `Monokai` theme, but this can be configured.
 
 Additionally, engine comes with the following built-in themes:
 
+- `Monokai`
 - `Visual Studio Code Dark+`
 
 The following languages are not currently supported for syntax highlighting but will be supported in the future:

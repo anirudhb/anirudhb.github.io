@@ -50,9 +50,7 @@ impl Config {
             roots,
             inputs,
             lib,
-            theme: self
-                .theme
-                .unwrap_or_else(|| "Visual Studio Code Dark+".to_string()),
+            theme: self.theme.unwrap_or_else(|| "Monokai".to_string()),
         }
     }
 }
