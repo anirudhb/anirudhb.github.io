@@ -165,7 +165,7 @@ It is up to you to fix them by adjusting the prelude and stylesheets.
 ## Engine: to do
 
 - [ ] Implement `https-noprocess`
-- [ ] Table of contents generator
+- [x] Table of contents generator
 - [ ] Fragment inclusion (e.g. JavaScript)
 - [ ] Actually figure out how to do generated fragments (hard)
 - [ ] Actually implement image assets
