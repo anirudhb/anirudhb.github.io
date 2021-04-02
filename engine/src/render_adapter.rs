@@ -6,7 +6,7 @@ use std::{
 use dashmap::DashSet;
 use pulldown_cmark::{escape, Event, LinkType, Tag};
 use regex::{Captures, Regex, RegexBuilder};
-use syntect::{highlighting::ThemeSet, parsing::SyntaxSet};
+use syntect::{highlighting::Theme, parsing::SyntaxSet};
 use tracing::{event, instrument, Level};
 use url::Url;
 
@@ -67,7 +67,7 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> RenderAdapter<'a, 'b, 'c, I>
             .unwrap();
         let r2 = Regex::new(r#"<pre(.*)>\n"#).unwrap();
         let ss = self.ctx.ss;
-        let theme = &self.ctx.ts.themes["Visual Studio Code Dark+"];
+        let theme = self.ctx.theme;
         r.replace_all(inp, |caps: &Captures| {
             self.ctx.styles.insert("code");
             let language_token = &caps[1];
@@ -260,5 +260,5 @@ pub struct ProcessorContext<'a, 'b: 'a> {
     pub(crate) render_stack: &'a DashSet<RenderingInput>,
     pub(crate) new_stack: &'a mut Vec<RenderingInput>,
     pub(crate) ss: &'a SyntaxSet,
-    pub(crate) ts: &'a ThemeSet,
+    pub(crate) theme: &'a Theme,
 }

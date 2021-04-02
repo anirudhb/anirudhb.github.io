@@ -486,7 +486,7 @@ impl Processor {
                 render_stack: &self.render_stack,
                 new_stack: &mut new_stack,
                 ss: &self.ss,
-                ts: &self.ts,
+                theme: &self.ts.themes["Visual Studio Code Dark+"],
             };
             let mut adapter = RenderAdapter::new(parser, &mut ctx);
 
