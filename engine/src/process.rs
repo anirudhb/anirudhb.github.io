@@ -66,6 +66,8 @@ pub struct Processor {
     ts: ThemeSet,
 }
 
+const THEMES: &'static [u8] = include_bytes!(concat!(env!("OUT_DIR"), "/themes.themedump"));
+
 impl Processor {
     pub fn new(config: ResolvedConfig) -> Arc<Self> {
         Arc::new(Self {
@@ -74,8 +76,7 @@ impl Processor {
             finished: Default::default(),
             client: Client::new(),
             ss: SyntaxSet::load_defaults_newlines(),
-            ts: syntect::dumps::from_dump_file(concat!(env!("OUT_DIR"), "/themes.themedump"))
-                .unwrap(),
+            ts: syntect::dumps::from_binary::<ThemeSet>(THEMES),
         })
     }
 
