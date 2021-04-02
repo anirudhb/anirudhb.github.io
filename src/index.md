@@ -12,3 +12,5 @@ Here's a little bit more content!
 [Go to my blog!](hyperref:blog)
 
 [Test out the TOC](hyperref:test_toc)
+
+[Test out syntax highlighting](hyperref:test_syntax_highlighting)

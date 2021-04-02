@@ -489,6 +489,7 @@ impl Processor {
             let mut s = String::new();
             html::push_html(&mut s, &mut adapter);
 
+            s = adapter.postprocess_syntax_highlighting(&s);
             s = adapter.setup_header_links(&s);
 
             let toc = adapter.render_toc();

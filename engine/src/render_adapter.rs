@@ -4,7 +4,8 @@ use std::{
 };
 
 use pulldown_cmark::{escape, Event, LinkType, Tag};
-use regex::{Captures, Regex};
+use regex::{Captures, Regex, RegexBuilder};
+use syntect::{highlighting::ThemeSet, parsing::SyntaxSet};
 use tracing::{event, instrument, Level};
 use url::Url;
 
@@ -54,6 +55,39 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> RenderAdapter<'a, 'b, 'c, I>
             self.slugs_cache.insert(fixed_up.clone(), 0);
             format!("{}", fixed_up)
         }
+    }
+
+    /// Post processes syntax highlighting for code blocks
+    pub fn postprocess_syntax_highlighting(&self, inp: &str) -> String {
+        let r = RegexBuilder::new(r#"<pre><code class="language-([^\n]+?)">(.*?)</code></pre>"#)
+            .dot_matches_new_line(true)
+            .build()
+            .unwrap();
+        let ss = SyntaxSet::load_defaults_newlines();
+        let themes = ThemeSet::load_defaults();
+        let theme = &themes.themes["base16-ocean.dark"];
+        r.replace_all(inp, |caps: &Captures| {
+            let language_token = &caps[1];
+            let language_token = match language_token {
+                // TODO
+                "typescript" | "ts" => return caps[0].to_string(),
+                token => token,
+            };
+            println!("Processing language token = {}", language_token);
+            let text = &caps[2]
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&quot;", "\"");
+            let syntax = ss
+                .find_syntax_by_token(language_token)
+                .expect("Could not find syntax for token!");
+            let highlighted = syntect::html::highlighted_html_for_string(text, &ss, syntax, theme);
+            format!(
+                r#"<pre><code class="language-{0}">{1}</code></pre>"#,
+                language_token, highlighted
+            )
+        })
+        .into_owned()
     }
 
     /// Sets up header links so that the TOC can be generated.
