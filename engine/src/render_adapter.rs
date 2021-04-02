@@ -67,7 +67,7 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> RenderAdapter<'a, 'b, 'c, I>
             .unwrap();
         let r2 = Regex::new(r#"<pre(.*)>\n"#).unwrap();
         let ss = self.ctx.ss;
-        let theme = &self.ctx.ts.themes["vscode_darkplus"];
+        let theme = &self.ctx.ts.themes["Visual Studio Code Dark+"];
         r.replace_all(inp, |caps: &Captures| {
             self.ctx.styles.insert("code");
             let language_token = &caps[1];
