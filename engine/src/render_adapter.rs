@@ -45,7 +45,7 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> RenderAdapter<'a, 'b, 'c, I>
         let fixed_up = title
             .to_lowercase()
             .replace(" ", "-")
-            .replace(|c: char| !c.is_alphanumeric(), "");
+            .replace(|c: char| !c.is_alphanumeric() && c != '-', "");
         if self.slugs_cache.contains_key(&fixed_up) {
             self.slugs_cache
                 .insert(fixed_up.clone(), self.slugs_cache[&fixed_up] + 1);
