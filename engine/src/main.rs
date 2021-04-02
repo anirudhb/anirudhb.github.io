@@ -17,8 +17,7 @@ struct Args {
 }
 
 #[instrument]
-#[cfg_attr(not(target_os = "windows"), tokio::main)]
-#[cfg_attr(target_os = "windows", tokio::main(flavor = "current_thread"))]
+#[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = argh::from_env::<Args>();
 

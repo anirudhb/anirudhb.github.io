@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use dashmap::DashSet;
 use pulldown_cmark::{escape, Event, LinkType, Tag};
 use regex::{Captures, Regex, RegexBuilder};
 use syntect::{highlighting::ThemeSet, parsing::SyntaxSet};
@@ -163,7 +164,7 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
         let mut item = self.iter.next()?;
         let styles = &mut self.ctx.styles;
         let new_stack = &mut *self.ctx.new_stack;
-        let render_stack = &mut *self.ctx.render_stack;
+        let render_stack = self.ctx.render_stack;
         let finished = self.ctx.finished;
         let out_dir = &self.ctx.config.roots.output;
         let base_dir = &self.ctx.config.roots.source;
@@ -256,7 +257,7 @@ pub struct ProcessorContext<'a, 'b: 'a> {
     pub(crate) styles: &'a mut HashSet<&'b str>,
     pub(crate) filename: &'a Path,
     pub(crate) config: &'a ResolvedConfig,
-    pub(crate) finished: &'a HashSet<RenderingInput>,
-    pub(crate) render_stack: &'a mut HashSet<RenderingInput>,
+    pub(crate) finished: &'a DashSet<RenderingInput>,
+    pub(crate) render_stack: &'a DashSet<RenderingInput>,
     pub(crate) new_stack: &'a mut Vec<RenderingInput>,
 }

@@ -629,6 +629,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "argh",
+ "dashmap",
  "futures",
  "html-minifier",
  "image",

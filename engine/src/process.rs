@@ -11,6 +11,7 @@ use std::{
 };
 
 use anyhow::Context;
+use dashmap::DashSet;
 use image::ImageFormat;
 use pulldown_cmark::{html, Parser};
 use regex::{Captures, Regex};
@@ -18,7 +19,7 @@ use surf::Client;
 use tokio::{
     fs::File,
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
-    sync::{mpsc::UnboundedSender, Mutex, RwLock},
+    sync::mpsc::UnboundedSender,
 };
 use tokio_util::compat::FuturesAsyncReadCompatExt;
 use tracing::{event, instrument, Level};
@@ -53,9 +54,9 @@ pub struct Processor {
     /// Stuff is derived from this
     config: ResolvedConfig,
     // items that are currently being rendered
-    render_stack: Mutex<HashSet<RenderingInput>>,
+    render_stack: DashSet<RenderingInput>,
     // items that have already been rendered
-    finished: RwLock<HashSet<RenderingInput>>,
+    finished: DashSet<RenderingInput>,
     // request client
     client: Client,
 }
@@ -72,11 +73,8 @@ impl Processor {
 
     #[instrument(level = Level::INFO, skip(self))]
     pub async fn render_toplevel(self: Arc<Self>, force: bool) -> anyhow::Result<()> {
-        {
-            let mut stack = self.render_stack.lock().await;
-            stack.insert(RenderingInput::Index);
-            stack.insert(RenderingInput::Keep);
-        }
+        self.render_stack.insert(RenderingInput::Index);
+        self.render_stack.insert(RenderingInput::Keep);
         self.render_all(force).await?;
         Ok(())
     }
@@ -90,8 +88,8 @@ impl Processor {
         tokio::spawn(async move {
             let i2 = input.clone();
             let r = self.clone().render(input, force, tx.clone()).await;
-            self.render_stack.lock().await.remove(&i2);
-            self.finished.write().await.insert(i2);
+            self.render_stack.remove(&i2);
+            self.finished.insert(i2);
             tx.send(r).unwrap();
         });
     }
@@ -100,8 +98,9 @@ impl Processor {
     async fn render_all(self: Arc<Self>, force: bool) -> anyhow::Result<()> {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let stack = {
-            let mut s = self.render_stack.lock().await;
-            std::mem::take(&mut *s)
+            let copy = self.render_stack.clone();
+            self.render_stack.clear();
+            copy
         };
         for input in stack {
             let tx = tx.clone();
@@ -236,8 +235,6 @@ impl Processor {
         };
         // Match font URLs inside...
         let re2 = Regex::new(r"url\((?P<url>\S+)\)").unwrap();
-        let mut render_stack = self.render_stack.lock().await;
-        let finished = self.finished.read().await;
         let contents = re2.replace_all(&contents, |captures: &Captures| {
             let input = captures.name("url").unwrap();
             use sha2::Digest;
@@ -264,8 +261,8 @@ impl Processor {
                 _ => unreachable!(),
             };
             let new_url = format!("url(/fonts/{})", output_filename);
-            if !render_stack.contains(&input) && !finished.contains(&input) {
-                render_stack.insert(input.clone());
+            if !self.render_stack.contains(&input) && !self.finished.contains(&input) {
+                self.render_stack.insert(input.clone());
                 self.clone().spawn_input(force, input, tx.clone());
             }
             new_url
@@ -469,9 +466,6 @@ impl Processor {
         };
 
         let html = {
-            let finished_guard = self.finished.read().await;
-            let mut render_stack = self.render_stack.lock().await;
-
             /* No awaits from here... */
 
             let parser = Parser::new(&buf);
@@ -480,8 +474,8 @@ impl Processor {
                 filename,
                 styles: &mut styles,
                 config: &self.config,
-                finished: &finished_guard,
-                render_stack: &mut render_stack,
+                finished: &self.finished,
+                render_stack: &self.render_stack,
                 new_stack: &mut new_stack,
             };
             let mut adapter = RenderAdapter::new(parser, &mut ctx);
@@ -505,8 +499,6 @@ impl Processor {
         };
 
         let styles = {
-            let mut render_stack = self.render_stack.lock().await;
-            let finished = self.finished.read().await;
             let mut new_styles = Vec::new();
             for sname in styles.into_iter() {
                 let path = style_chunks_root.join(sname).with_extension("css");
@@ -514,8 +506,8 @@ impl Processor {
                 if let Ok(_) = AsRef::<Path>::as_ref(&path).canonicalize() {
                     let css_out_path = out_dir.join("css").join(sname).with_extension("css");
                     let input = RenderingInput::Style(sname);
-                    if !render_stack.contains(&input) && !finished.contains(&input) {
-                        render_stack.insert(input.clone());
+                    if !self.render_stack.contains(&input) && !self.finished.contains(&input) {
+                        self.render_stack.insert(input.clone());
                         self.clone().spawn_input(force, input, tx.clone());
                     }
                     new_styles.push(format!(
