@@ -69,15 +69,19 @@ pub struct Processor {
 const THEMES: &'static [u8] = include_bytes!(concat!(env!("OUT_DIR"), "/themes.themedump"));
 
 impl Processor {
-    pub fn new(config: ResolvedConfig) -> Arc<Self> {
-        Arc::new(Self {
+    pub fn new(config: ResolvedConfig) -> anyhow::Result<Arc<Self>> {
+        let mut ts = syntect::dumps::from_binary::<ThemeSet>(THEMES);
+        if let Some(ref loc) = config.lib.themes_location {
+            ts.add_from_folder(loc)?;
+        }
+        Ok(Arc::new(Self {
             config,
             render_stack: Default::default(),
             finished: Default::default(),
             client: Client::new(),
             ss: SyntaxSet::load_defaults_newlines(),
-            ts: syntect::dumps::from_binary::<ThemeSet>(THEMES),
-        })
+            ts,
+        }))
     }
 
     #[instrument(level = Level::INFO, skip(self))]
@@ -487,7 +491,7 @@ impl Processor {
                 render_stack: &self.render_stack,
                 new_stack: &mut new_stack,
                 ss: &self.ss,
-                theme: &self.ts.themes["Visual Studio Code Dark+"],
+                theme: &self.ts.themes[&self.config.theme],
             };
             let mut adapter = RenderAdapter::new(parser, &mut ctx);
 

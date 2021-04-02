@@ -41,7 +41,7 @@ async fn main() -> anyhow::Result<()> {
             .context("Parent folder of config file")?,
     );
     event!(Level::DEBUG, config = ?cfg);
-    let processor = Processor::new(cfg);
+    let processor = Processor::new(cfg)?;
     processor.render_toplevel(args.force).await?;
 
     Ok(())

@@ -16,6 +16,10 @@ pub struct Config {
     pub inputs: Option<InputsConfig>,
     // Lib config
     pub lib: Option<LibConfig>,
+    /// Theme to use for syntax highlighting.
+    ///
+    /// Defaults to "Visual Studio Code Dark+" (built-in).
+    pub theme: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -27,6 +31,8 @@ pub struct ResolvedConfig {
     pub inputs: ResolvedInputsConfig,
     // Lib config
     pub lib: ResolvedLibConfig,
+    /// Theme to use for syntax highlighting.
+    pub theme: String,
 }
 
 impl Config {
@@ -40,7 +46,14 @@ impl Config {
             .lib
             .unwrap_or_default()
             .resolve(&roots.lib, config_folder);
-        ResolvedConfig { roots, inputs, lib }
+        ResolvedConfig {
+            roots,
+            inputs,
+            lib,
+            theme: self
+                .theme
+                .unwrap_or_else(|| "Visual Studio Code Dark+".to_string()),
+        }
     }
 }
 
@@ -138,6 +151,10 @@ pub struct LibConfig {
     pub prelude_location: Option<PathBuf>,
     // Style config
     pub styles: Option<StylesConfig>,
+    /// Location of extra themes
+    ///
+    /// If none, no extra themes will be loaded.
+    pub themes_location: Option<PathBuf>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -147,6 +164,8 @@ pub struct ResolvedLibConfig {
     pub prelude_location: PathBuf,
     // Style config
     pub styles: ResolvedStylesConfig,
+    /// Location of extra themes
+    pub themes_location: Option<PathBuf>,
 }
 
 impl LibConfig {
@@ -161,6 +180,7 @@ impl LibConfig {
                 .styles
                 .unwrap_or_default()
                 .resolve(lib_root, config_folder),
+            themes_location: self.themes_location,
         }
     }
 }

@@ -35,6 +35,7 @@ source = "src"                                 # required
 lib = "lib"                                    # required
 assets = "assets"                              # required
 output = "out"                                 # required
+theme = "Visual Studio Code Dark+"             # optional
 
 [inputs]                                       # optional
 index = "${roots.source}/index.md"             # optional
@@ -42,6 +43,7 @@ keep = "${roots.source}/_keep.md"              # optional
 
 [lib]                                          # optional
 prelude_location = "${roots.lib}/prelude.html" # optional
+# theme_location = "mythemes/"                 # optional
 [lib.styles]                                   # optional
 chunks_root = "${roots.lib}/style-chunks"      # optional
 # relative filenames here are resolved relative
@@ -108,6 +110,20 @@ To optimize a font, remove the `link` tag from your prelude and add a special CS
 
 Font optimization will fetch the stylesheet and embed it inline. Any font files it references will also be converted into static assets.
 This is especially beneficial when using HTTP/2 since latency is lower on first-party fetches than on external sites.
+
+### Syntax highlighting
+
+engine includes syntax highlighting for code blocks by default.
+If a theme directory is specified in the config, additional TextMate themes (\*.tmTheme) will be loaded from the directory.
+By default, engine uses the `Visual Studio Code Dark+` theme, but this can be configured.
+
+Additionally, engine comes with the following built-in themes:
+
+- `Visual Studio Code Dark+`
+
+The following languages are not currently supported for syntax highlighting but will be supported in the future:
+
+- TypeScript
 
 ### Using the keep file
 
