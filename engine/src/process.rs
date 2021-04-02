@@ -74,7 +74,8 @@ impl Processor {
             finished: Default::default(),
             client: Client::new(),
             ss: SyntaxSet::load_defaults_newlines(),
-            ts: ThemeSet::load_defaults(),
+            ts: syntect::dumps::from_dump_file(concat!(env!("OUT_DIR"), "/themes.themedump"))
+                .unwrap(),
         })
     }
 
