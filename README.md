@@ -126,6 +126,40 @@ The following languages are not currently supported for syntax highlighting but 
 
 - TypeScript
 
+### Frontmatter parsing
+
+engine parses front matter by default.
+Frontmatter can be specified as such at the beginning of a Markdown file:
+
+```yaml
+---
+title: My title
+date: 04/03/2021
+time_to_read: 17 minutes
+---
+
+```
+
+The current fields that are parsed are:
+
+- Title (string, required)
+- Date (`MM/DD/YYYY` format, optional)
+- Time to read (string, optional)
+
+**Note**: In YAML, the absence of a field does not make it null.
+Therefore, to specify that a field is null, use `~` or `null` as the value, like this:
+
+```yaml
+---
+title: My title
+date: ~ # No date
+time_to_read: 5 seconds
+---
+
+```
+
+Otherwise the frontmatter will not parse!
+
 ### Using the keep file
 
 The keep file (`${inputs.keep}`) is a special file which will never be written to the output folder.
