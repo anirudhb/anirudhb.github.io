@@ -203,6 +203,8 @@ Flag: `picoCTF{d15a5m_t34s3r_6f8c8200}`
 
 ## Tab, Tab, Attack
 
+_20 points_
+
 Looks like we have a zip file. Let's download and unzip it:
 
 ```
@@ -253,6 +255,8 @@ $ Addadshashanammu/Almurbalarammi/Ashalmimilkala/Assurnabitashpi/Maelkashishi/On
 Flag: `picoCTF{l3v3l_up!_t4k3_4_r35t!_2bcfb2ab}`
 
 ## Magikarp Ground Mission
+
+_30 points_
 
 This challenge involves an instance.
 Looks like we have to SSH into the instance with the username `ctf-player` and password `a13b7f9d`.
