@@ -1,3 +1,9 @@
+---
+title: Testing syntax highlighting
+date: ~
+time_to_read: ~
+---
+
 # Languages
 
 In no particular order

@@ -1,4 +1,8 @@
-# Anirudh :))
+---
+title: Anirudh :))
+date: ~
+time_to_read: ~
+---
 
 This is the v2 version of my site which I'm building as we speak!
 Keep watching this page for updates 👀

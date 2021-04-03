@@ -1,4 +1,8 @@
-# first blog post
+---
+title: first blog post
+date: ~
+time_to_read: ~
+---
 
 [go to the second post](hyperref:second)
 

@@ -1,4 +1,8 @@
-# second blog post
+---
+title: second blog post
+date: ~
+time_to_read: ~
+---
 
 haha funny
 

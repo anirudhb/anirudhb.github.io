@@ -514,11 +514,7 @@ impl Processor {
 
             (s, fm)
         };
-        let frontmatter = frontmatter.unwrap_or_else(|| crate::frontmatter::Frontmatter {
-            title: "Untitled".to_string(),
-            date: None,
-            time_to_read: None,
-        });
+        let frontmatter = frontmatter.context("No frontmatter found!")?;
 
         let styles = {
             let mut new_styles = Vec::new();

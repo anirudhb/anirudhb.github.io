@@ -1,3 +1,9 @@
+---
+title: third blog post
+date: ~
+time_to_read: ~
+---
+
 # yay!!
 
 new file funny

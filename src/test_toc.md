@@ -1,3 +1,9 @@
+---
+title: Testing TOC
+date: ~
+time_to_read: ~
+---
+
 # Heading 1
 
 Text

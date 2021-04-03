@@ -160,6 +160,9 @@ time_to_read: 5 seconds
 
 Otherwise the frontmatter will not parse!
 
+Additionally, **note that frontmatter is required.**
+A title is required at minimum.
+
 ### Using the keep file
 
 The keep file (`${inputs.keep}`) is a special file which will never be written to the output folder.
@@ -175,6 +178,7 @@ For example, if you wanted to keep the hidden page `secret.md`:
 
 The prelude file (`${roots.lib.prelude_location}`) is a file that acts as an HTML template for all of your pages.
 There are two important "slots" that must be present in the prelude: content and styles.
+Additionally, frontmatter properties can be used if available.
 
 To add a slot to your prelude, simply write:
 
@@ -183,6 +187,19 @@ To add a slot to your prelude, simply write:
 @@@SLOT_CONTENT@@@
 <!-- Your styles go here -->
 @@@SLOT_STYLES@@@
+
+<!-- The title will go here -->
+@@@SLOT_TITLE@@@
+
+<!-- This section will be included if there is a date -->
+<!-- @@@IF_DATE@@@ -->
+<time>@@@DATE@@@</time>
+<!-- @@@ENDIF@@@ -->
+
+<!-- This section will be included if there is a time to read -->
+<!-- @@@IF_TIME_TO_READ@@@ -->
+<time>@@@IF_TIME_TO_READ@@@</time>
+<!-- @@@ENDIF@@@ -->
 ```
 
 ### Lighthouse
