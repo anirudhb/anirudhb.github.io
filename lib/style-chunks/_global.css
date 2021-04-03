@@ -9,7 +9,8 @@ html {
 body {
   transition: max-width 1s ease;
   width: 100vw;
-  margin: 3px 8px;
+  padding: 3px 8px;
+  box-sizing: border-box;
 }
 
 @media screen and (min-width: 600px) {
