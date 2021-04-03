@@ -14,3 +14,5 @@ Here's a little bit more content!
 [Test out the TOC](hyperref:test_toc)
 
 [Test out syntax highlighting](hyperref:test_syntax_highlighting)
+
+[Test out front matter](hyperref:test_frontmatter)

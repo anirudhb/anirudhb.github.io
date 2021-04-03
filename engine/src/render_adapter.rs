@@ -10,17 +10,31 @@ use syntect::{highlighting::Theme, parsing::SyntaxSet};
 use tracing::{event, instrument, Level};
 use url::Url;
 
-use crate::config::ResolvedConfig;
 use crate::process::RenderingInput;
+use crate::{config::ResolvedConfig, frontmatter::Frontmatter};
 
 pub struct RenderAdapter<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> {
-    pub(crate) ctx: &'a mut ProcessorContext<'a, 'c>,
-    pub(crate) iter: I,
+    ctx: &'a mut ProcessorContext<'a, 'c>,
+    iter: I,
     // Table of contents
     // level, title, slug
     toc: Vec<(usize, String, String)>,
     // Cache for header slugification
     slugs_cache: HashMap<String, usize>,
+    // Extracted and parsed front matter, if any
+    pub(crate) frontmatter: Option<Frontmatter>,
+    // Frontmatter parsing state
+    frontmatter_state: FrontmatterParsingState,
+}
+
+#[derive(Debug)]
+enum FrontmatterParsingState {
+    // Waiting for frontmatter
+    Ready,
+    // Currently parsing frontmatter
+    Parsing(String),
+    // Done parsing frontmatter
+    Done,
 }
 
 const TOC_START: &'static str = r#"
@@ -39,6 +53,8 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> RenderAdapter<'a, 'b, 'c, I>
             ctx,
             toc: Vec::new(),
             slugs_cache: HashMap::new(),
+            frontmatter: None,
+            frontmatter_state: FrontmatterParsingState::Ready,
         }
     }
 
@@ -162,6 +178,70 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> Iterator for RenderAdapter<'
         let out_dir = &self.ctx.config.roots.output;
         let base_dir = &self.ctx.config.roots.source;
         let filename = self.ctx.filename;
+        if let Event::Rule = item {
+            // Start frontmatter parsing
+            use FrontmatterParsingState::*;
+            if let Ready = self.frontmatter_state {
+                // println!("starting frontmatter parsing");
+                self.frontmatter_state = Parsing(String::new());
+            } else if let Parsing(ref s) = self.frontmatter_state {
+                // Finish parsing
+                if !s.is_empty() {
+                    // println!("Parsing front matter: {}", s);
+                    let r = Frontmatter::parse_from_str(&s);
+                    match r {
+                        Ok(r) => {
+                            println!("Parsed front matter: {:#?}", r);
+                            self.frontmatter = Some(r);
+                        }
+                        Err(e) => {
+                            println!("Error parsing front matter: {}", e);
+                            self.frontmatter = None;
+                        }
+                    }
+                }
+                self.frontmatter_state = Done;
+            }
+        }
+        if let Event::End(Tag::Heading(..)) = item {
+            use FrontmatterParsingState::*;
+            // End frontmatter parsing if needed
+            if let Parsing(ref s) = self.frontmatter_state {
+                // Finish parsing
+                if !s.is_empty() {
+                    // println!("Parsing front matter: {}", s);
+                    let r = Frontmatter::parse_from_str(&s);
+                    match r {
+                        Ok(r) => {
+                            println!("Parsed front matter: {:#?}", r);
+                            self.frontmatter = Some(r);
+                        }
+                        Err(e) => {
+                            println!("Error parsing front matter: {}", e);
+                            self.frontmatter = None;
+                        }
+                    }
+                }
+                self.frontmatter_state = Done;
+            }
+        }
+        if let Event::Text(ref s) = item {
+            if let FrontmatterParsingState::Parsing(ref mut ps) = self.frontmatter_state {
+                // println!("Frontmatter parsing got {}", s);
+                ps.push_str(s);
+            }
+        }
+        if let Event::SoftBreak = item {
+            if let FrontmatterParsingState::Parsing(ref mut ps) = self.frontmatter_state {
+                ps.push('\n');
+            }
+        }
+        if let FrontmatterParsingState::Parsing(..) = self.frontmatter_state {
+            // Skip this element since front matter is being parsed
+            // This should eventually lead to the parsing ending.. therefore element get emitted
+            // TODO: does this blow the stack?
+            return self.next();
+        }
         if let Event::Start(Tag::Image(..)) = item {
             styles.insert("image");
         }

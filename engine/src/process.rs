@@ -13,7 +13,7 @@ use std::{
 use anyhow::Context;
 use dashmap::DashSet;
 use image::ImageFormat;
-use pulldown_cmark::{html, Parser};
+use pulldown_cmark::{html, Options, Parser};
 use regex::{Captures, Regex};
 use surf::Client;
 use syntect::{highlighting::ThemeSet, parsing::SyntaxSet};
@@ -481,7 +481,7 @@ impl Processor {
         let html = {
             /* No awaits from here... */
 
-            let parser = Parser::new(&buf);
+            let parser = Parser::new_ext(&buf, Options::all());
             let mut new_stack = Vec::new();
             let mut ctx = ProcessorContext {
                 filename,

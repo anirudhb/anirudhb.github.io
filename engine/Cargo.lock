@@ -373,6 +373,7 @@ dependencies = [
  "libc",
  "num-integer",
  "num-traits",
+ "time 0.1.43",
  "winapi",
 ]
 
@@ -419,7 +420,7 @@ dependencies = [
  "percent-encoding",
  "rand 0.8.3",
  "sha2",
- "time",
+ "time 0.2.25",
  "version_check",
 ]
 
@@ -597,6 +598,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "212d0f5754cb6769937f4501cc0e67f4f4483c8d2c3e1e922ee9edbe4ab4c7c0"
 
 [[package]]
+name = "dtoa"
+version = "0.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56899898ce76aaf4a0f24d914c97ea6ed976d42fec6ad33fcbb0a1103e07b2b0"
+
+[[package]]
 name = "educe"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -629,6 +636,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "argh",
+ "chrono",
  "dashmap",
  "futures",
  "html-minifier",
@@ -636,6 +644,7 @@ dependencies = [
  "pulldown-cmark",
  "regex",
  "serde",
+ "serde_yaml",
  "sha2",
  "surf",
  "syntect",
@@ -1888,6 +1897,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_yaml"
+version = "0.8.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15654ed4ab61726bf918a39cb8d98a2e2995b002387807fa6ba58fdf7f59bb23"
+dependencies = [
+ "dtoa",
+ "linked-hash-map",
+ "serde",
+ "yaml-rust",
+]
+
+[[package]]
 name = "sha1"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2124,6 +2145,16 @@ dependencies = [
  "jpeg-decoder",
  "miniz_oxide 0.4.4",
  "weezl",
+]
+
+[[package]]
+name = "time"
+version = "0.1.43"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca8a50ef2360fbd1eeb0ecd46795a87a19024eb4b53c5dc916ca1fd95fe62438"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]
