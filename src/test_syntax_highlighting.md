@@ -1,4 +1,6 @@
-# Cool languages
+# Languages
+
+In no particular order
 
 ## Rust
 
@@ -62,8 +64,6 @@ int main(int argc, char** argv) {
     return 0;
 }
 ```
-
-# Uncool languages
 
 ## JavaScript
 
