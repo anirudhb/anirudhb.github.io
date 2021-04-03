@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Personal website!</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="generator" content="engine v0.1.0"/>
+<meta name="description" content="A personal website :)"/>
+<link rel="icon" href="data:;base64,iVBORw0KGgo="/>
+<link rel="preload" href="/css/image.css" as="style"/>
+<link rel="stylesheet" type="text/css" href="/css/image.css"/>
+<link rel="preload" href="/css/toc.css" as="style"/>
+<link rel="stylesheet" type="text/css" href="/css/toc.css"/>
+<link rel="preload" href="/css/_global.css" as="style"/>
+<link rel="stylesheet" type="text/css" href="/css/_global.css"/>
+<link rel="preload" href="/css/link.css" as="style"/>
+<link rel="stylesheet" type="text/css" href="/css/link.css"/>
+<link rel="preload" href="/css/code.css" as="style"/>
+<link rel="stylesheet" type="text/css" href="/css/code.css"/>
+</head>
+<body>
+<header>
+<h1 class="title">PicoCTF 2021 writeups</h1>
+<p>
+Date:
+<time class="date" itemprop="dateCreated" datetime="04/03/2021">04/03/2021</time>
+</p>
+</header>
+<section class="toc">
+<h1>Table of contents</h1>
+<ol><li><a href="#introduction">Introduction</a></li><li><a href="#general-skills">General Skills</a></li><ol><li><a href="#obedient-cat">Obedient Cat</a></li><li><a href="#python-wrangling">Python Wrangling</a></li><li><a href="#wave-a-flag">Wave a flag</a></li><li><a href="#nice-netcat">Nice netcat…</a></li><li><a href="#static-aint-always-noise">Static ain’t always noise</a></li><li><a href="#tab-tab-attack">Tab, Tab, Attack</a></li><li><a href="#magikarp-ground-mission">Magikarp Ground Mission</a></li></ol></ol>
+</section>
+</h2>
+<h1 id="introduction">Introduction</h1>
+<p>These are my writeups for PicoCTF 2021!</p>
+<p>All of these challenges assume that the target computer is running 64-bit Linux.
+I’ve hopefully written these to be a gentle introduction to CTFs, and tried to elaborate as much as possible.
+If you don’t understand something it’s always great to Google it!</p>
+<h1 id="general-skills">General Skills</h1>
+<h2 id="obedient-cat">Obedient Cat</h2>
+<p><em>5 points</em></p>
+<p>Download <a href="https://mercury.picoctf.net/static/0e428b2db9788d31189329bed089ce98/flag">the flag</a> to get the flag :p</p>
+<p>Flag: <code>picoCTF{s4n1ty_v3r1f13d_2fd6ed29}</code></p>
+<h2 id="python-wrangling">Python Wrangling</h2>
+<p><em>10 points</em></p>
+<p>Download the Python script, password and flag.</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">$ curl -LO https://mercury.picoctf.net/static/325a52d249be0bd3811421eacd2c877a/ende.py
+</span><span style="color:#f8f8f2;">$ curl -LO https://mercury.picoctf.net/static/325a52d249be0bd3811421eacd2c877a/pw.txt
+</span><span style="color:#f8f8f2;">$ curl -LO https://mercury.picoctf.net/static/325a52d249be0bd3811421eacd2c877a/flag.txt.en
+</span></code></pre>
+<p>Then we run the script with <code>-h</code> to get help:</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">$ python ende.py -h
+</span><span style="color:#f8f8f2;">Usage: ende.py (-e/-d) [file]
+</span><span style="color:#f8f8f2;">Examples:
+</span><span style="color:#f8f8f2;">  To decrypt a file named &#39;pole.txt&#39;, do: &#39;$ python ende.py -d pole.txt&#39;
+</span><span style="color:#f8f8f2;">
+</span></code></pre>
+<p>Here we can see that we need to just run <code>python ende.py -d flag.txt.en</code> using the password from <code>pw.txt</code>:</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">$ python ende.py -d flag.txt.en
+</span><span style="color:#f8f8f2;">Please enter the password:ac9bd0ffac9bd0ffac9bd0ffac9bd0ff
+</span><span style="color:#f8f8f2;">picoCTF{redacted}
+</span></code></pre>
+<p>Flag: <code>picoCTF{4p0110_1n_7h3_h0us3_ac9bd0ff}</code></p>
+<h2 id="wave-a-flag">Wave a flag</h2>
+<p><em>10 points</em></p>
+<p>We download the given program:</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">$ curl -LO https://mercury.picoctf.net/static/f95b1ee9f29d631d99073e34703a2826/warm
+</span></code></pre>
+<p>Next, since the program is executable we have to set the proper permissions:</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">$ chmod +x warm
+</span></code></pre>
+<p>Now we have to run the program. Since we don’t know what it does, we’ll use <code>-h</code>:</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">$ ./warm -h
+</span><span style="color:#f8f8f2;">Oh, help? I actually don&#39;t do much, but I do have this flag here: picoCTF{redacted}
+</span></code></pre>
+<p>Flag: <code>picoCTF{b1scu1ts_4nd_gr4vy_f0668f62}</code></p>
+<h2 id="nice-netcat">Nice netcat…</h2>
+<p><em>15 points</em></p>
+<p>We just run the netcat command provided:</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">$ nc mercury.picoctf.net 21135
+</span><span style="color:#f8f8f2;">112
+</span><span style="color:#f8f8f2;">105
+</span><span style="color:#f8f8f2;">99
+</span><span style="color:#f8f8f2;">111
+</span><span style="color:#f8f8f2;">67
+</span><span style="color:#f8f8f2;">84
+</span><span style="color:#f8f8f2;">70
+</span><span style="color:#f8f8f2;">123
+</span><span style="color:#f8f8f2;">103
+</span><span style="color:#f8f8f2;">48
+</span><span style="color:#f8f8f2;">48
+</span><span style="color:#f8f8f2;">100
+</span><span style="color:#f8f8f2;">95
+</span><span style="color:#f8f8f2;">107
+</span><span style="color:#f8f8f2;">49
+</span><span style="color:#f8f8f2;">116
+</span><span style="color:#f8f8f2;">116
+</span><span style="color:#f8f8f2;">121
+</span><span style="color:#f8f8f2;">33
+</span><span style="color:#f8f8f2;">95
+</span><span style="color:#f8f8f2;">110
+</span><span style="color:#f8f8f2;">49
+</span><span style="color:#f8f8f2;">99
+</span><span style="color:#f8f8f2;">51
+</span><span style="color:#f8f8f2;">95
+</span><span style="color:#f8f8f2;">107
+</span><span style="color:#f8f8f2;">49
+</span><span style="color:#f8f8f2;">116
+</span><span style="color:#f8f8f2;">116
+</span><span style="color:#f8f8f2;">121
+</span><span style="color:#f8f8f2;">33
+</span><span style="color:#f8f8f2;">95
+</span><span style="color:#f8f8f2;">97
+</span><span style="color:#f8f8f2;">102
+</span><span style="color:#f8f8f2;">100
+</span><span style="color:#f8f8f2;">53
+</span><span style="color:#f8f8f2;">102
+</span><span style="color:#f8f8f2;">100
+</span><span style="color:#f8f8f2;">97
+</span><span style="color:#f8f8f2;">52
+</span><span style="color:#f8f8f2;">125
+</span><span style="color:#f8f8f2;">10
+</span></code></pre>
+<p>Looks like it is printing the decimal value of each character of the flag.</p>
+<p>For reference, remember that characters are encoded using ASCII. Here’s a helpful table:
+<img src="/images/3ca58f23110def569228c31f3474014c54af8a1515efbc4d1c27787c5142f3e3.webp" alt="ASCII table"/></p>
+<p>Let’s write a simple Python script that connects to the server and decodes the characters.
+I’m using pwntools (which has documentation <a href="https://docs.pwntools.com/en/latest">here</a>.)
+I’ll also be using pwntools for the rest of the exploits so it’s a good idea to read up on its usage.
+Anyways, the script:</p>
+<pre style="background-color:#272822;"><code class="language-py"><span style="color:#f92672;">from </span><span style="color:#f8f8f2;">pwn </span><span style="color:#f92672;">import </span><span style="color:#ae81ff;">*
+</span><span style="color:#f8f8f2;">
+</span><span style="color:#f8f8f2;">conn </span><span style="color:#f92672;">= </span><span style="color:#f8f8f2;">remote(</span><span style="color:#e6db74;">&quot;mercury.picoctf.net&quot;</span><span style="color:#f8f8f2;">, </span><span style="color:#ae81ff;">21135</span><span style="color:#f8f8f2;">)
+</span><span style="color:#75715e;"># Decode and split into lines
+</span><span style="color:#f8f8f2;">encoded </span><span style="color:#f92672;">= </span><span style="color:#f8f8f2;">conn.recvall().strip().decode(</span><span style="color:#e6db74;">&quot;ascii&quot;</span><span style="color:#f8f8f2;">).split(</span><span style="color:#e6db74;">&quot;</span><span style="color:#ae81ff;">\n</span><span style="color:#e6db74;">&quot;</span><span style="color:#f8f8f2;">)
+</span><span style="color:#f8f8f2;">decoded </span><span style="color:#f92672;">= </span><span style="color:#e6db74;">&quot;&quot;
+</span><span style="color:#f92672;">for </span><span style="color:#f8f8f2;">number </span><span style="color:#f92672;">in </span><span style="color:#f8f8f2;">encoded:
+</span><span style="color:#f8f8f2;">    </span><span style="color:#75715e;"># Turn into number
+</span><span style="color:#f8f8f2;">    number </span><span style="color:#f92672;">= </span><span style="font-style:italic;color:#66d9ef;">int</span><span style="color:#f8f8f2;">(number)
+</span><span style="color:#f8f8f2;">    </span><span style="color:#75715e;"># Add to decoded
+</span><span style="color:#f8f8f2;">    decoded </span><span style="color:#f92672;">+= </span><span style="color:#66d9ef;">chr</span><span style="color:#f8f8f2;">(number)
+</span><span style="color:#f8f8f2;">info(</span><span style="font-style:italic;color:#66d9ef;">f</span><span style="color:#e6db74;">&quot;Flag: </span><span style="color:#f8f8f2;">{decoded}</span><span style="color:#e6db74;">&quot;</span><span style="color:#f8f8f2;">)
+</span></code></pre>
+<p>Flag: <code>picoCTF{g00d_k1tty!_n1c3_k1tty!_afd5fda4}</code></p>
+<h2 id="static-aint-always-noise">Static ain’t always noise</h2>
+<p><em>20 points</em></p>
+<p>We first downloaded the given binary and script:</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">$ curl -LO https://mercury.picoctf.net/static/0f6ea599582dcce7b4f1ba94e3617baf/static
+</span><span style="color:#f8f8f2;">$ curl -LO https://mercury.picoctf.net/static/0f6ea599582dcce7b4f1ba94e3617baf/ltdis.sh
+</span></code></pre>
+<p>Let’s make the script executable, and run it with no arguments to see how to use it:</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">$ chmod +x ltdis.sh
+</span><span style="color:#f8f8f2;">$ ./ltdis.sh
+</span><span style="color:#f8f8f2;">Attempting disassembly of  ...
+</span><span style="color:#f8f8f2;">objdump: &#39;a.out&#39;: No such file
+</span><span style="color:#f8f8f2;">objdump: section &#39;.text&#39; mentioned in a -j option, but not found in any input file
+</span><span style="color:#f8f8f2;">Disassembly failed!
+</span><span style="color:#f8f8f2;">Usage: ltdis.sh &lt;program-file&gt;
+</span><span style="color:#f8f8f2;">Bye!
+</span></code></pre>
+<p>Ah. We have to give it a program. Let’s give it the static file:</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">$ ./ltdis.sh static
+</span><span style="color:#f8f8f2;">Attempting disassembly of static ...
+</span><span style="color:#f8f8f2;">Disassembly successful! Available at: static.ltdis.x86_64.txt
+</span><span style="color:#f8f8f2;">Ripping strings from binary with file offsets...
+</span><span style="color:#f8f8f2;">Any strings found in static have been written to static.ltdis.strings.txt with file offset
+</span></code></pre>
+<p>Now we can search the strings for the flag wrapper (<code>picoCTF{</code>):</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">$ grep picoCTF{ static.ltdis.strings.txt
+</span><span style="color:#f8f8f2;">   1020 picoCTF{redacted}
+</span></code></pre>
+<p>Flag: <code>picoCTF{d15a5m_t34s3r_6f8c8200}</code></p>
+<h2 id="tab-tab-attack">Tab, Tab, Attack</h2>
+<p>Looks like we have a zip file. Let’s download and unzip it:</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">$ curl -LO https://mercury.picoctf.net/static/9689f2b453ad5daeb73ca7534e4d1521/Addadshashanammu.zip
+</span><span style="color:#f8f8f2;">$ unzip Addadshashanammu.zip
+</span><span style="color:#f8f8f2;">Archive:  Addadshashanammu.zip
+</span><span style="color:#f8f8f2;">   creating: Addadshashanammu/
+</span><span style="color:#f8f8f2;">   creating: Addadshashanammu/Almurbalarammi/
+</span><span style="color:#f8f8f2;">   creating: Addadshashanammu/Almurbalarammi/Ashalmimilkala/
+</span><span style="color:#f8f8f2;">   creating: Addadshashanammu/Almurbalarammi/Ashalmimilkala/Assurnabitashpi/
+</span><span style="color:#f8f8f2;">   creating: Addadshashanammu/Almurbalarammi/Ashalmimilkala/Assurnabitashpi/Maelkashishi/
+</span><span style="color:#f8f8f2;">   creating: Addadshashanammu/Almurbalarammi/Ashalmimilkala/Assurnabitashpi/Maelkashishi/Onnissiralis/
+</span><span style="color:#f8f8f2;">   creating: Addadshashanammu/Almurbalarammi/Ashalmimilkala/Assurnabitashpi/Maelkashishi/Onnissiralis/Ularradallaku/
+</span><span style="color:#f8f8f2;">  inflating: Addadshashanammu/Almurbalarammi/Ashalmimilkala/Assurnabitashpi/Maelkashishi/Onnissiralis/Ularradallaku/fang-of-haynekhtnamet
+</span></code></pre>
+<p>Looks like there’s a file in there.
+Unfortunately, typing out the whole file name will take forever, so let’s use the Tab key instead.
+In most shells, the Tab key will autocomplete the name of the file or directory that you want.</p>
+<p>So for example, if I pressed Tab here:</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">$ cat Addadshashanammu/
+</span></code></pre>
+<p>It would autocomplete to:</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">$ cat Addadshashanammu/Almurbalarammi/
+</span></code></pre>
+<p>So using this we can easily Tab to the file. Use file to get the file type:</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">$ file Addadshashanammu/Almurbalarammi/Ashalmimilkala/Assurnabitashpi/Maelkashishi/Onnissiralis/Ularradallaku/fang-of-haynekhtnamet
+</span><span style="color:#f8f8f2;">Addadshashanammu/Almurbalarammi/Ashalmimilkala/Assurnabitashpi/Maelkashishi/Onnissiralis/Ularradallaku/fang-of-haynekhtnamet: ELF 64-bit LSB shared object, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=72a56ba85df661b5a985999a435927c01095cccf, not stripped
+</span></code></pre>
+<p>Looks like it’s a program. Let’s make it executable and run it:</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">$ chmod +x Addadshashanammu/Almurbalarammi/Ashalmimilkala/Assurnabitashpi/Maelkashishi/Onnissiralis/Ularradallaku/fang-of-haynekhtnamet
+</span><span style="color:#f8f8f2;">$ Addadshashanammu/Almurbalarammi/Ashalmimilkala/Assurnabitashpi/Maelkashishi/Onnissiralis/Ularradallaku/fang-of-haynekhtnamet
+</span><span style="color:#f8f8f2;">*ZAP!* picoCTF{redacted}
+</span></code></pre>
+<p>Flag: <code>picoCTF{l3v3l_up!_t4k3_4_r35t!_2bcfb2ab}</code></p>
+<h2 id="magikarp-ground-mission">Magikarp Ground Mission</h2>
+<p>This challenge involves an instance.
+Looks like we have to SSH into the instance with the username <code>ctf-player</code> and password <code>a13b7f9d</code>.</p>
+<p>If you don’t know too much about SSH, you can read more about it <a href="https://www.digitalocean.com/community/tutorials/ssh-essentials-working-with-ssh-servers-clients-and-keys">here</a>.</p>
+<p>Let’s SSH into the instance, with the provided command:</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">$ ssh ctf-player@venus.picoctf.net -p 49409
+</span><span style="color:#f8f8f2;">The authenticity of host &#39;[venus.picoctf.net]:49409 ([3.131.124.143]:49409)&#39; can&#39;t be established.
+</span><span style="color:#f8f8f2;">ECDSA key fingerprint is SHA256:NrQkIxNEQQho/GA7jE0WlIa7Jh4VF9sAvC5awkbuj1Q.
+</span><span style="color:#f8f8f2;">Are you sure you want to continue connecting (yes/no)? yes
+</span><span style="color:#f8f8f2;">Warning: Permanently added &#39;[venus.picoctf.net]:49409,[3.131.124.143]:49409&#39; (ECDSA) to the list of known hosts.
+</span><span style="color:#f8f8f2;">ctf-player@venus.picoctf.net&#39;s password: a13b7f9d
+</span><span style="color:#f8f8f2;">Welcome to Ubuntu 18.04.5 LTS (GNU/Linux 5.4.0-1041-aws x86_64)
+</span><span style="color:#f8f8f2;">
+</span><span style="color:#f8f8f2;"> * Documentation:  https://help.ubuntu.com
+</span><span style="color:#f8f8f2;"> * Management:     https://landscape.canonical.com
+</span><span style="color:#f8f8f2;"> * Support:        https://ubuntu.com/advantage
+</span><span style="color:#f8f8f2;">This system has been minimized by removing packages and content that are
+</span><span style="color:#f8f8f2;">not required on a system that users do not log into.
+</span><span style="color:#f8f8f2;">
+</span><span style="color:#f8f8f2;">To restore this content, you can run the &#39;unminimize&#39; command.
+</span><span style="color:#f8f8f2;">
+</span><span style="color:#f8f8f2;">The programs included with the Ubuntu system are free software;
+</span><span style="color:#f8f8f2;">the exact distribution terms for each program are described in the
+</span><span style="color:#f8f8f2;">individual files in /usr/share/doc/*/copyright.
+</span><span style="color:#f8f8f2;">
+</span><span style="color:#f8f8f2;">Ubuntu comes with ABSOLUTELY NO WARRANTY, to the extent permitted by
+</span><span style="color:#f8f8f2;">applicable law.
+</span><span style="color:#f8f8f2;">
+</span><span style="color:#f8f8f2;">ctf-player@pico-chall$
+</span></code></pre>
+<p>Let’s run <code>ls</code> to poke around a little (I’m using <code>chall$</code> to denote that we are in SSH):</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">chall$ ls
+</span><span style="color:#f8f8f2;">1of3.flag.txt  instructions-to-2of3.txt
+</span></code></pre>
+<p>Ooh, let’s look at both of those files:</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">chall$ cat 1of3.flag.txt
+</span><span style="color:#f8f8f2;">picoCTF{xxsh_
+</span><span style="color:#f8f8f2;">chall$ cat instructions-to-2of3.txt
+</span><span style="color:#f8f8f2;">Next, go to the root of all things, more succinctly `/`
+</span></code></pre>
+<p>Okay, let’s try that and take a look there:</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">chall$ cd /
+</span><span style="color:#f8f8f2;">chall$ ls
+</span><span style="color:#f8f8f2;">2of3.flag.txt  bin  boot  dev  etc  home  instructions-to-3of3.txt  lib  lib64 media  mnt  opt  proc  root  run  sbin                                                                            srv  sys  tmp  usr  var
+</span></code></pre>
+<p>Ahah! Let’s look at those files again…</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">chall$ cat 2of3.flag.txt
+</span><span style="color:#f8f8f2;">0ut_0f_\/\/4t3r_
+</span><span style="color:#f8f8f2;">chall$ cat instructions-to-3of3.txt
+</span><span style="color:#f8f8f2;">Lastly, ctf-player, go home... more succinctly `~`
+</span></code></pre>
+<p>Let’s do that and take a look again:</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">chall$ cd ~
+</span><span style="color:#f8f8f2;">chall$ ls
+</span><span style="color:#f8f8f2;">3of3.flag.txt  drop-in
+</span></code></pre>
+<p>Yes! We have the last part of the flag:</p>
+<pre style="background-color:#272822;"><code class="language-none"><span style="color:#f8f8f2;">chall$ cat 3of3.flag.txt
+</span><span style="color:#f8f8f2;">71be5264}
+</span></code></pre>
+<p>Let’s combine all three parts togther.</p>
+<p>Flag: <code>picoCTF{xxsh_0ut_0f_\/\/4t3r_71be5264}</code></p>
+</body>
+</html>
