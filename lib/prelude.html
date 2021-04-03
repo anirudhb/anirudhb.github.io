@@ -10,6 +10,21 @@
         @@@SLOT_STYLES@@@
     </head>
     <body>
+        <header>
+            <h1 class="title">@@@SLOT_TITLE@@@</h1>
+            <!-- @@@IF_DATE@@@ -->
+            <p>
+                Date:
+                <time class="date" itemprop="dateCreated" datetime="@@@SLOT_DATE@@@">@@@SLOT_DATE@@@</time>
+            </p>
+            <!-- @@@ENDIF@@@ -->
+            <!-- @@@IF_TIME_TO_READ@@@ -->
+            <p>
+                Time to read:
+                <time class="timetoread" itemprop="timeRequired" datetime="@@@SLOT_TIME_TO_READ@@@">@@@SLOT_TIME_TO_READ@@@</time>
+            </p>
+            <!-- @@@ENDIF@@@ -->
+        </header>
         @@@SLOT_CONTENT@@@
     </body>
 </html>

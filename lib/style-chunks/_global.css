@@ -26,3 +26,9 @@ body {
   font-family: "Source Serif Pro", serif;
   font-size: 16px;
 }
+
+.title {
+  /* 1.5x size of h1 */
+  font-size: 3em;
+  text-align: center;
+}

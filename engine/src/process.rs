@@ -14,7 +14,7 @@ use anyhow::Context;
 use dashmap::DashSet;
 use image::ImageFormat;
 use pulldown_cmark::{html, Options, Parser};
-use regex::{Captures, Regex};
+use regex::{Captures, Regex, RegexBuilder};
 use surf::Client;
 use syntect::{highlighting::ThemeSet, parsing::SyntaxSet};
 use tokio::{
@@ -27,6 +27,7 @@ use tracing::{event, instrument, Level};
 use url::Url;
 
 use crate::config::ResolvedConfig;
+use crate::frontmatter::DATE_FORMAT;
 use crate::render_adapter::{ProcessorContext, RenderAdapter};
 
 /// Rendering input
@@ -478,7 +479,7 @@ impl Processor {
             h
         };
 
-        let html = {
+        let (html, frontmatter) = {
             /* No awaits from here... */
 
             let parser = Parser::new_ext(&buf, Options::all());
@@ -504,14 +505,20 @@ impl Processor {
             let toc = adapter.render_toc();
             s = format!("{}{}", toc, s);
 
+            let fm = adapter.frontmatter.take();
             /* ...to here. */
 
             for input in new_stack {
                 self.clone().spawn_input(force, input, tx.clone());
             }
 
-            s
+            (s, fm)
         };
+        let frontmatter = frontmatter.unwrap_or_else(|| crate::frontmatter::Frontmatter {
+            title: "Untitled".to_string(),
+            date: None,
+            time_to_read: None,
+        });
 
         let styles = {
             let mut new_styles = Vec::new();
@@ -548,7 +555,47 @@ impl Processor {
             Ok::<_, std::io::Error>(s)
         }?
         .replace("@@@SLOT_STYLES@@@", &format!("\n{}\n", styles.join("\n")))
-        .replace("@@@SLOT_CONTENT@@@", &html);
+        .replace("@@@SLOT_CONTENT@@@", &html)
+        .replace("@@@SLOT_TITLE@@@", &frontmatter.title);
+
+        let html = {
+            let mut html = html;
+
+            let date_r = RegexBuilder::new(r#"<!-- @@@IF_DATE@@@ -->(.*?)<!-- @@@ENDIF@@@ -->"#)
+                .dot_matches_new_line(true)
+                .build()
+                .unwrap();
+            if let Some(d) = frontmatter.date {
+                html = date_r
+                    .replace_all(&html, |caps: &Captures| {
+                        // Expand dates inside and all that
+                        let inner = &caps[1];
+                        let date = d.format(DATE_FORMAT).to_string();
+                        inner.replace("@@@SLOT_DATE@@@", &date)
+                    })
+                    .to_string();
+            } else {
+                html = date_r.replace_all(&html, "").to_string();
+            }
+            let ttr_r =
+                RegexBuilder::new(r#"<!-- @@@IF_TIME_TO_READ@@@ -->(.*?)<!-- @@@ENDIF@@@ -->"#)
+                    .dot_matches_new_line(true)
+                    .build()
+                    .unwrap();
+            if let Some(ttr) = frontmatter.time_to_read {
+                html = ttr_r
+                    .replace_all(&html, |caps: &Captures| {
+                        // Expand ttr inside and all that
+                        let inner = &caps[1];
+                        inner.replace("@@@SLOT_TIME_TO_READ@@@", &ttr)
+                    })
+                    .to_string();
+            } else {
+                html = ttr_r.replace_all(&html, "").to_string();
+            }
+
+            html
+        };
 
         // Minify HTML
         let minified = html_minifier::minify(&html)?;

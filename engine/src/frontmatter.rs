@@ -16,7 +16,7 @@ pub struct Frontmatter {
     pub time_to_read: Option<String>,
 }
 
-const DATE_FORMAT: &'static str = "%m/%d/%Y";
+pub const DATE_FORMAT: &'static str = "%m/%d/%Y";
 
 fn serialize_date<S: Serializer>(date: &Option<NaiveDate>, ser: S) -> Result<S::Ok, S::Error> {
     if let Some(date) = date {
