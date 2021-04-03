@@ -71,19 +71,13 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> RenderAdapter<'a, 'b, 'c, I>
         r.replace_all(inp, |caps: &Captures| {
             self.ctx.styles.insert("code");
             let language_token = &caps[1];
-            let language_token = match language_token {
-                // TODO
-                "typescript" | "ts" => return caps[0].to_string(),
-                token => token,
-            };
-            println!("Processing language token = {}", language_token);
             let text = &caps[2]
                 .replace("&lt;", "<")
                 .replace("&gt;", ">")
                 .replace("&quot;", "\"");
             let syntax = ss
                 .find_syntax_by_token(language_token)
-                .expect("Could not find syntax for token!");
+                .unwrap_or_else(|| ss.find_syntax_plain_text());
             let highlighted = syntect::html::highlighted_html_for_string(text, &ss, syntax, theme);
             let highlighted = r2
                 .replace_all(&highlighted, |caps: &Captures| {
