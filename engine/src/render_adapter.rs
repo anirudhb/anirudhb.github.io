@@ -77,17 +77,22 @@ impl<'a, 'b, 'c: 'a, I: Iterator<Item = Event<'b>>> RenderAdapter<'a, 'b, 'c, I>
     /// Post processes syntax highlighting for code blocks
     /// and adds "code" to styles if necessary
     pub fn postprocess_syntax_highlighting(&mut self, inp: &str) -> String {
-        let r = RegexBuilder::new(r#"<pre><code class="language-([^\n]+?)">(.*?)</code></pre>"#)
-            .dot_matches_new_line(true)
-            .build()
-            .unwrap();
+        let r = RegexBuilder::new(
+            r#"<pre><code(?: class="language-(?P<language>[^\n]+?)")?>(?P<code>.*?)</code></pre>"#,
+        )
+        .dot_matches_new_line(true)
+        .build()
+        .unwrap();
         let r2 = Regex::new(r#"<pre(.*)>\n"#).unwrap();
         let ss = self.ctx.ss;
         let theme = self.ctx.theme;
         r.replace_all(inp, |caps: &Captures| {
             self.ctx.styles.insert("code");
-            let language_token = &caps[1];
-            let text = &caps[2]
+            let language_token = caps.name("language").map(|m| m.as_str()).unwrap_or("none");
+            let text = &caps
+                .name("code")
+                .unwrap()
+                .as_str()
                 .replace("&lt;", "<")
                 .replace("&gt;", ">")
                 .replace("&quot;", "\"");
